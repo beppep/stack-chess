@@ -1203,7 +1203,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   function renderArrows(G) {
     const NS = 'http://www.w3.org/2000/svg';
     arrowLayer.innerHTML = '';
-    G.stack.forEach(e => {
+    G.stack.forEach((e, idx) => {
+      const order = G.stack.length - idx; // 1 = resolves first
       const g = document.createElementNS(NS, 'g');
       g.setAttribute('class', `arrow ${e.player} ${e.state}`);
       const [x1, y1] = center(e.from), [x2, y2] = center(e.to);
@@ -1240,7 +1241,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       const bx = x1 - 30, by = y1 - 30;
       const badge = document.createElementNS(NS, 'g');
       badge.setAttribute('class', 'badge');
-      badge.innerHTML = `<circle cx="${bx}" cy="${by}" r="17"></circle><text x="${bx}" y="${by + 1}">${e.n}</text>`;
+      badge.innerHTML = `<circle cx="${bx}" cy="${by}" r="17"></circle><text x="${bx}" y="${by + 1}">${order}</text>`;
       g.appendChild(badge);
       arrowLayer.appendChild(g);
     });
@@ -1325,7 +1326,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       if (e.state === 'done') pill = 'resolved';
       if (e.state === 'fizzled') pill = 'fizzled';
       items.push(`<li class="card ${e.player} ${e.state} ${isTop ? 'top' : ''}">
-        <span class="num">${e.n}</span>
+        <span class="num">${G.stack.length - i}</span>
         <div><div class="who">${NAME[e.player]} ${e.n === 1 ? 'moves' : 'responds'}</div>
         <div class="mv"><span class="g">${e.glyph}︎</span>${e.label}</div></div>
         <span class="pill">${pill}</span></li>`);
