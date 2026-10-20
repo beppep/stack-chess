@@ -239,6 +239,12 @@ details.rules b { color: var(--fg); font-weight: 700; }
 .modebar button[aria-selected="true"] { background: var(--panel-2); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); }
 .modebar button:focus-visible { outline: 2px solid var(--sel); outline-offset: 1px; }
 
+/* Computer panel */
+.cpu { display: flex; flex-direction: column; gap: 10px; }
+.cpu h2 { margin: 0; }
+.cpu .hint { margin: 0; }
+.cpu .label { margin: 4px 0 -4px; font-size: .78rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+
 /* Online panel */
 .online { display: flex; flex-direction: column; gap: 10px; }
 .online h2 { margin: 0; }
@@ -294,6 +300,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     <section class="board-col" aria-label="Board">
       <div class="modebar" role="tablist" aria-label="Where you play">
         <button type="button" role="tab" id="modeLocal" aria-selected="true">Same screen</button>
+        <button type="button" role="tab" id="modeCpu" aria-selected="false">vs Computer</button>
         <button type="button" role="tab" id="modeOnline" aria-selected="false">Online</button>
       </div>
       <div class="status" id="status" aria-live="polite"></div>
@@ -323,6 +330,22 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     </section>
 
     <aside class="side">
+      <div class="panel cpu" id="cpuPanel" hidden>
+        <h2>Computer</h2>
+        <p class="label">You play</p>
+        <div class="btnrow" id="cpuColor">
+          <button class="btn small" type="button" data-c="w">White</button>
+          <button class="btn small" type="button" data-c="b">Black</button>
+        </div>
+        <p class="label">Strength</p>
+        <div class="btnrow" id="cpuLevel">
+          <button class="btn small" type="button" data-l="easy">Easy</button>
+          <button class="btn small" type="button" data-l="normal">Normal</button>
+          <button class="btn small" type="button" data-l="hard">Hard</button>
+        </div>
+        <p class="hint">Picking a side starts a new game. The computer looks a few moves and responses ahead and counts material.</p>
+      </div>
+
       <div class="panel" id="onlinePanel" hidden>
         <div id="onlineBody"></div>
       </div>
@@ -619,9 +642,152 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     return G;
   }
 
+  // ---------- Computer opponent: minimax with alpha-beta ----------
+  // The search works on a light copy of the game: board, the stack, and whose decision it is.
+  // An action is either putting a move on the stack or letting the stack resolve.
+  // Resolving keeps the same player to act, so the score only flips sign when the player changes.
+  const VAL = { p: 100, n: 310, b: 320, r: 500, q: 900, k: 0 };
+  const WIN = 100000;
+  const AI_LEVELS = {
+    easy: { ms: 250, maxDepth: 2, noise: 90 },
+    normal: { ms: 900, maxDepth: 6, noise: 15 },
+    hard: { ms: 2500, maxDepth: 10, noise: 0 }
+  };
+
+  function sFrom(G) {
+    return {
+      st: cloneState(G.st), cur: G.cur, winner: null,
+      stack: G.stack.map(e => ({ from: e.from, to: e.to, pieceId: e.pieceId, flag: e.flag, capSq: e.capSq, capId: e.capId, promoTo: e.promoTo, player: e.player }))
+    };
+  }
+  function sActions(s) {
+    const used = new Set(s.stack.map(e => e.pieceId));
+    const out = [];
+    if (s.stack.length) out.push({ t: 'resolve' });
+    for (const m of legalMoves(s.st, s.cur)) if (!used.has(m.pieceId)) out.push({ t: 'move', m });
+    return out;
+  }
+  function sResolve(s) {
+    const st = cloneState(s.st);
+    let winner = null;
+    for (let i = s.stack.length - 1; i >= 0; i--) {
+      const e = s.stack[i];
+      if (!stillValid(st, e)) continue;
+      const cap = applyMove(st, e);
+      if (cap && cap.t === 'k') { winner = e.player; break; }
+    }
+    return { st, stack: [], cur: s.cur, winner };
+  }
+  function sApply(s, a) {
+    if (a.t === 'resolve') return sResolve(s);
+    const m = a.m.promo ? { ...a.m, promoTo: 'q' } : a.m;
+    // Declaring doesn't touch the board, so the board is shared until something resolves.
+    return { st: s.st, stack: s.stack.concat([{ ...m, player: s.cur }]), cur: other(s.cur), winner: null };
+  }
+
+  // Material plus small bonuses: pawns for advancing, pieces for standing near the centre.
+  function material(st) {
+    let score = 0;
+    for (let s = 0; s < 64; s++) {
+      const p = st.board[s];
+      if (!p) continue;
+      const r = s >> 3, c = s & 7;
+      let v = VAL[p.t];
+      if (p.t === 'p') v += (p.c === 'w' ? 6 - r : r - 1) * 8;
+      else if (p.t !== 'k') v += (3.5 - Math.abs(3.5 - r)) * 3 + (3.5 - Math.abs(3.5 - c)) * 4;
+      score += p.c === 'w' ? v : -v;
+    }
+    return score;
+  }
+  // Score for the player to act in s. A pending stack is scored as if it resolved now.
+  function evaluate(s, ply) {
+    const t = s.stack.length ? sResolve(s) : s;
+    if (t.winner) return t.winner === s.cur ? WIN - ply : -(WIN - ply);
+    let v = material(t.st);
+    if (s.cur === 'b') v = -v;
+    const mine = kingSq(t.st.board, s.cur), theirs = kingSq(t.st.board, other(s.cur));
+    if (theirs >= 0 && attacked(t.st.board, theirs, s.cur)) v += 150;
+    if (mine >= 0 && attacked(t.st.board, mine, other(s.cur))) v -= 150;
+    return v;
+  }
+
+  function orderScore(s, a) {
+    if (a.t === 'resolve') return 400;
+    const target = s.st.board[a.m.to], mover = s.st.board[a.m.from];
+    if (!target) return a.m.promo ? 800 : 0;
+    if (target.t === 'k') return WIN;
+    return VAL[target.t] * 10 - VAL[mover.t];
+  }
+  function ordered(s, acts) {
+    return acts.map(a => [orderScore(s, a), a]).sort((x, y) => y[0] - x[0]).map(x => x[1]);
+  }
+
+  function search(s, depth, alpha, beta, ply, ctx) {
+    if (depth === 0) return evaluate(s, ply);
+    if ((++ctx.nodes & 511) === 0 && performance.now() > ctx.deadline) throw ctx;
+    const acts = ordered(s, sActions(s));
+    if (!acts.length) return 0;
+    let best = -Infinity;
+    for (const a of acts) {
+      const c = sApply(s, a);
+      let v;
+      if (c.winner) v = c.winner === s.cur ? WIN - ply - 1 : -(WIN - ply - 1);
+      else if (c.cur === s.cur) v = search(c, depth - 1, alpha, beta, ply + 1, ctx);
+      else v = -search(c, depth - 1, -beta, -alpha, ply + 1, ctx);
+      if (v > best) best = v;
+      if (v > alpha) alpha = v;
+      if (alpha >= beta) break;
+    }
+    return best;
+  }
+
+  // Iterative deepening within a time budget; returns an action in the game's own format.
+  function chooseAction(G, level) {
+    const cfg = AI_LEVELS[level] || AI_LEVELS.normal;
+    const s = sFrom(G);
+    const ctx = { nodes: 0, deadline: performance.now() + cfg.ms };
+    let acts = ordered(s, sActions(s));
+    if (!acts.length) return null;
+    let results = acts.map(a => [a, 0]);
+    for (let d = 1; d <= cfg.maxDepth; d++) {
+      try {
+        const round = [];
+        let alpha = -Infinity;
+        for (const a of acts) {
+          const c = sApply(s, a);
+          let v;
+          if (c.winner) v = c.winner === s.cur ? WIN : -WIN;
+          else if (c.cur === s.cur) v = search(c, d - 1, alpha, Infinity, 1, ctx);
+          else v = -search(c, d - 1, -Infinity, -alpha, 1, ctx);
+          round.push([a, v]);
+          if (v > alpha) alpha = v;
+        }
+        round.sort((x, y) => y[1] - x[1]);
+        results = round;
+        acts = round.map(x => x[0]);
+        if (round[0][1] >= WIN - 50) break; // found a forced king capture
+      } catch (e) {
+        if (e !== ctx) throw e;
+        break; // out of time: keep the last finished depth
+      }
+    }
+    let pick = results[0][0];
+    if (cfg.noise) {
+      let bestNoisy = -Infinity;
+      for (const [a, v] of results) {
+        const nv = v + Math.random() * cfg.noise;
+        if (nv > bestNoisy) { bestNoisy = nv; pick = a; }
+      }
+    }
+    if (pick.t === 'resolve') return { t: 'resolve' };
+    return pick.m.promo ? { t: 'move', from: pick.m.from, to: pick.m.to, p: 'q' } : { t: 'move', from: pick.m.from, to: pick.m.to };
+  }
+
   // ---------- View state ----------
   const V = { mode: 'local', flipped: false, sel: null, selMoves: [], busy: false };
   let LG = freshGame();               // the same-screen game
+  let CG = freshGame();               // the game against the computer
+  const CPU = { color: 'b', level: 'normal', thinking: false };
   let pendingNewGame = false, legalNow = [];
 
   // ---------- Online: two browsers connected directly (PeerJS / WebRTC) ----------
@@ -655,9 +821,10 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     store.set('recent', recent.slice(0, 6));
   }
 
-  const shownGame = () => (V.mode === 'local' ? LG : (NET.code ? NET.G : freshGame()));
+  const shownGame = () => V.mode === 'cpu' ? CG : (V.mode === 'local' ? LG : (NET.code ? NET.G : freshGame()));
   function myColors() {
     if (V.mode === 'local') return ['w', 'b'];
+    if (V.mode === 'cpu') return [other(CPU.color)];
     return NET.code && NET.connected ? [myColor()] : [];
   }
   function canAct() {
@@ -676,11 +843,12 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
 
   async function act(a) {
     if (!canAct()) return;
-    if (V.mode === 'local') {
-      const gen = startAction(LG, a);
+    if (V.mode === 'local' || V.mode === 'cpu') {
+      const gen = startAction(V.mode === 'cpu' ? CG : LG, a);
       if (!gen) return;
       clearSel();
       await animate(gen);
+      cpuTurn();
       return;
     }
     a = { ...a, c: NET.G.cur, by: NET.role };
@@ -940,10 +1108,12 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     if (V.busy || V.mode === mode) return;
     V.mode = mode;
     clearSel();
+    if (mode === 'cpu') V.flipped = CPU.color === 'w';
     if (mode === 'online' && NET.code) orient();
     if (mode === 'local') V.flipped = false;
     renderAll();
     if (mode === 'online') pump();
+    if (mode === 'cpu') cpuTurn();
   }
 
   // ---------- Rendering ----------
@@ -1021,7 +1191,9 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     }
     $('modeLocal').setAttribute('aria-selected', V.mode === 'local');
     $('modeOnline').setAttribute('aria-selected', V.mode === 'online');
-    $('newBtn').hidden = V.mode !== 'local';
+    $('newBtn').hidden = V.mode === 'online';
+    $('cpuPanel').hidden = V.mode !== 'cpu';
+    $('modeCpu').setAttribute('aria-selected', V.mode === 'cpu');
     $('onlinePanel').hidden = V.mode !== 'online';
     renderArrows(G);
     renderStatus(G);
@@ -1108,6 +1280,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         ? `Your opponent is deciding whether to respond to ${G.stack[G.stack.length - 1].label}.`
         : 'Waiting for your opponent to move.';
       s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`, sub);
+      return;
+    }
+    if (V.mode === 'cpu' && c === CPU.color && G.phase !== 'resolving') {
+      s.innerHTML = chip(c) + text(CPU.thinking ? 'Computer is thinking…' : `${NAME[c]} (computer)`,
+        G.phase === 'respond' ? `Deciding whether to respond to ${G.stack[G.stack.length - 1].label}.` : 'Choosing a move.');
       return;
     }
     const top = G.stack[G.stack.length - 1];
@@ -1254,15 +1431,54 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     box.replaceChildren(frag);
   }
 
+  // ---------- Computer opponent (play) ----------
+  function cpuTurn() {
+    if (V.mode !== 'cpu' || V.busy || CPU.thinking) return;
+    if ((CG.phase !== 'move' && CG.phase !== 'respond') || CG.cur !== CPU.color) return;
+    CPU.thinking = true;
+    const game = CG;
+    render();
+    setTimeout(async () => {
+      const a = game === CG ? chooseAction(game, CPU.level) : null;
+      CPU.thinking = false;
+      if (game !== CG || V.mode !== 'cpu' || !a) { render(); cpuTurn(); return; }
+      const gen = startAction(CG, a);
+      if (gen) await animate(gen); else render();
+      cpuTurn();
+    }, 80);
+  }
+  function renderCpuPanel() {
+    for (const b of document.querySelectorAll('#cpuColor button')) {
+      const on = b.dataset.c === other(CPU.color);
+      b.classList.toggle('primary', on); b.setAttribute('aria-pressed', on);
+    }
+    for (const b of document.querySelectorAll('#cpuLevel button')) {
+      const on = b.dataset.l === CPU.level;
+      b.classList.toggle('primary', on); b.setAttribute('aria-pressed', on);
+    }
+  }
+  document.querySelectorAll('#cpuColor button').forEach(b => b.addEventListener('click', () => {
+    if (V.busy) return;
+    CPU.color = other(b.dataset.c);
+    V.flipped = b.dataset.c === 'b';
+    CG = freshGame(); clearSel(); renderCpuPanel(); render(); cpuTurn();
+  }));
+  document.querySelectorAll('#cpuLevel button').forEach(b => b.addEventListener('click', () => {
+    CPU.level = b.dataset.l; renderCpuPanel();
+  }));
+  renderCpuPanel();
+
   // ---------- Controls ----------
   $('resolveBtn').addEventListener('click', () => act({ t: 'resolve' }));
   $('flipBtn').addEventListener('click', () => { V.flipped = !V.flipped; render(); });
   $('modeLocal').addEventListener('click', () => setMode('local'));
   $('modeOnline').addEventListener('click', () => setMode('online'));
+  $('modeCpu').addEventListener('click', () => setMode('cpu'));
   $('newBtn').addEventListener('click', () => {
     const btn = $('newBtn');
     if (V.busy) return;
-    const started = LG.log.length > 0 && LG.phase !== 'over';
+    const curGame = V.mode === 'cpu' ? CG : LG;
+    const started = curGame.log.length > 0 && curGame.phase !== 'over';
     if (started && !pendingNewGame) {
       pendingNewGame = true;
       btn.textContent = 'Click again to restart';
@@ -1271,7 +1487,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       return;
     }
     pendingNewGame = false; btn.textContent = 'New game'; btn.classList.remove('warn');
-    LG = freshGame(); clearSel(); render();
+    if (V.mode === 'cpu') { CG = freshGame(); clearSel(); render(); cpuTurn(); }
+    else { LG = freshGame(); clearSel(); render(); }
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { $('promo').hidden = true; clearSel(); render(); }
