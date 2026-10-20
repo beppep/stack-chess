@@ -1166,8 +1166,13 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     $('previewBtn').classList.toggle('held', !!V.preview);
     if (V.sel !== null && !V.preview && !legalNow.length) clearSel();
     const targets = new Map(V.preview ? [] : V.selMoves.map(m => [m.to, m]));
+    // A king is marked red when resolving the current stack would capture it.
     const checkSq = [];
-    for (const c of ['w', 'b']) { const k = kingSq(st.board, c); if (k >= 0 && attacked(st.board, k, other(c))) checkSq.push(k); }
+    if (!V.preview && real.stack.length && real.phase !== 'resolving') {
+      const P = JSON.parse(JSON.stringify(real));
+      drain(resolveGen(P));
+      if (P.result && P.result.winner) { const k = kingSq(st.board, other(P.result.winner)); if (k >= 0) checkSq.push(k); }
+    }
     const resolvingEntry = G.stack.find(e => e.state === 'resolving');
 
     for (let i = 0; i < 64; i++) {
