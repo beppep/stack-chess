@@ -366,6 +366,14 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         <div id="onlineBody"></div>
       </div>
 
+      <div class="panel">
+        <h2>The stack</h2>
+        <p class="hint">Top card resolves first. A move that is no longer possible fizzles.</p>
+        <ol class="stack" id="stack"></ol>
+        <button class="btn primary" id="resolveBtn" type="button" disabled>Let it resolve</button>
+        <button class="btn" id="previewBtn" type="button" disabled>Hold to preview</button>
+      </div>
+
       <div class="panel chat" id="chatPanel" hidden>
         <h2>Chat</h2>
         <ol class="chatlog" id="chatLog" aria-live="polite"></ol>
@@ -373,14 +381,6 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
           <input id="chatInput" maxlength="300" autocomplete="off" placeholder="Say something" aria-label="Chat message">
           <button class="btn small" id="chatSend" type="submit">Send</button>
         </form>
-      </div>
-
-      <div class="panel">
-        <h2>The stack</h2>
-        <p class="hint">Top card resolves first. A move that is no longer possible fizzles.</p>
-        <ol class="stack" id="stack"></ol>
-        <button class="btn primary" id="resolveBtn" type="button" disabled>Let it resolve</button>
-        <button class="btn" id="previewBtn" type="button" disabled>Hold to preview</button>
       </div>
 
       <div class="panel">
@@ -395,7 +395,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
             <li><b>Pawns stay legal.</b> A straight pawn push fizzles if anything is now in front of it, and a diagonal pawn capture fizzles if there is nothing left to take.</li>
             <li><b>Responses</b> are chosen from the board as it is now, before anything on the stack happens.</li>
             <li><b>One move per piece.</b> A piece that already has a move on the stack can't be given another one until the stack resolves. Those pieces are dimmed.</li>
-            <li><b>Online.</b> Create a game and send the invite link. No sign-in needed: the two browsers connect directly, so both players keep the page open while playing.</li>
+            <li><b>Online.</b> Create a game and send the invite link. No sign-in needed: the two browsers connect directly, so both players keep the page open while playing. Anyone else who opens the link watches.</li>
             <li><b>No check rules.</b> You may move into check, leave your king attacked, or castle through attacked squares. You win by capturing the king, and your opponent can respond to save it. There is no checkmate.</li>
           </ul>
         </details>
@@ -819,7 +819,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     code: null, role: null, hostColor: 'w', round: 1,
     actions: [], applied: 0, G: freshGame(),
     peer: null, conn: null, connected: false, status: '', note: '',
-    token: null, guestToken: null, retryTimer: null, full: false, chat: []
+    token: null, guestToken: null, retryTimer: null, full: false, chat: [],
+    watching: false, watchers: new Set()   // watching: this page is a spectator; watchers: spectators connected to the host
   };
 
   const store = {
@@ -844,7 +845,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   function myColors() {
     if (V.mode === 'local') return ['w', 'b'];
     if (V.mode === 'cpu') return [other(CPU.color)];
-    return NET.code && NET.connected ? [myColor()] : [];
+    return NET.code && NET.connected && !NET.watching ? [myColor()] : [];
   }
   function canAct() {
     const G = shownGame();
@@ -917,16 +918,24 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     pump();
   }
 
+  // Sends to the other player, and from the host also to everyone watching.
   function send(msg) {
-    if (NET.conn && NET.conn.open) { try { NET.conn.send(msg); } catch (_) {} }
+    const to = [NET.conn].concat(NET.role === 'host' ? [...NET.watchers] : []);
+    for (const c of to) if (c && c.open) { try { c.send(msg); } catch (_) {} }
+  }
+  function relay(msg) {
+    if (NET.role !== 'host') return;
+    for (const c of NET.watchers) if (c.open) { try { c.send(msg); } catch (_) {} }
   }
 
   function onMessage(msg, conn) {
     if (!msg || typeof msg !== 'object') return;
     if (NET.role === 'host' && msg.type === 'join') {
       if (NET.guestToken && msg.token !== NET.guestToken) {
-        try { conn.send({ type: 'full' }); } catch (_) {}
-        setTimeout(() => conn.close(), 500);
+        // Both seats are taken, so this person watches.
+        NET.watchers.add(conn);
+        conn.send({ type: 'welcome', watch: true, round: NET.round, hostColor: NET.hostColor, actions: NET.actions, chat: NET.chat.slice(-50) });
+        renderAll();
         return;
       }
       NET.guestToken = msg.token;
@@ -943,12 +952,20 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       renderAll();
       return;
     }
+    if (NET.role === 'host' && NET.watchers.has(conn)) {
+      if (msg.type === 'sync-req') conn.send({ type: 'sync', round: NET.round, hostColor: NET.hostColor, actions: NET.actions });
+      return;
+    }
     if (conn !== NET.conn && msg.type !== 'welcome' && msg.type !== 'full') return;
     switch (msg.type) {
       case 'welcome':
         if (NET.role !== 'guest') return;
         NET.conn = conn; NET.connected = true; NET.status = '';
+        NET.watching = !!msg.watch;
+        if (NET.watching && Array.isArray(msg.chat)) NET.chat = msg.chat.filter(m => m && typeof m.text === 'string');
         receiveList(msg.round, msg.hostColor, msg.actions);
+        orient();
+        renderAll();
         break;
       case 'full':
         NET.full = true;
@@ -958,15 +975,17 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         break;
       case 'act': {
         if (msg.round !== NET.round || !msg.a) { send({ type: 'sync-req' }); return; }
-        const theirColor = other(myColor());
-        if (msg.a.c !== theirColor || msg.a.by === NET.role) return;
-        if (msg.n === NET.actions.length) { NET.actions.push(msg.a); saveNet(); pump(); }
+        const fromOk = NET.watching ? seatsOf()[msg.a.c] === msg.a.by : (msg.a.c === other(myColor()) && msg.a.by !== NET.role);
+        if (!fromOk) return;
+        if (msg.n === NET.actions.length) { NET.actions.push(msg.a); saveNet(); relay(msg); pump(); }
         else if (!(msg.n < NET.actions.length && sameAct(NET.actions[msg.n], msg.a))) send({ type: 'sync-req' });
         break;
       }
       case 'chat':
         if (typeof msg.text === 'string' && msg.text.trim()) {
-          NET.chat.push({ me: false, text: msg.text.slice(0, 300), t: Date.now() });
+          const c = msg.c === 'w' || msg.c === 'b' ? msg.c : other(myColor());
+          NET.chat.push({ c, text: msg.text.slice(0, 300), t: Date.now() });
+          relay({ type: 'chat', c, text: msg.text.slice(0, 300) });
           saveNet();
           renderChat();
         }
@@ -979,6 +998,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         break;
       case 'rematch':
         if (typeof msg.round === 'number' && msg.round > NET.round && (msg.hostColor === 'w' || msg.hostColor === 'b')) {
+          relay(msg);
           receiveList(msg.round, msg.hostColor, []);
         }
         break;
@@ -1040,6 +1060,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       peer.on('connection', conn => {
         conn.on('data', msg => onMessage(msg, conn));
         conn.on('close', () => {
+          if (NET.watchers.delete(conn)) renderAll();
           if (conn === NET.conn) { NET.conn = null; NET.connected = false; renderAll(); }
         });
       });
@@ -1086,13 +1107,14 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   }
   const randomToken = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 
-  function orient() { V.flipped = myColor() === 'b'; }
+  function orient() { V.flipped = !NET.watching && myColor() === 'b'; }
 
   function openGame(code, opts) {
     stopNet();
     const saved = store.get('game-' + code);
     NET.code = code;
     NET.full = false; NET.note = ''; NET.status = '';
+    NET.watching = false; NET.watchers = new Set();
     if (opts && opts.create) {
       NET.role = 'host'; NET.hostColor = opts.color; NET.round = 1; NET.actions = [];
       NET.token = null; NET.guestToken = null;
@@ -1311,6 +1333,10 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
                                : (NET.role === 'host' ? 'Your opponent left. They can reopen the invite link to continue.' : 'Connecting…')));
       return;
     }
+    if (online && NET.watching && G.phase !== 'resolving') {
+      s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`, 'You are watching this game.');
+      return;
+    }
     if (online && !myColors().includes(c) && G.phase !== 'resolving') {
       const sub = G.phase === 'respond'
         ? `Your opponent is deciding whether to respond to ${G.stack[G.stack.length - 1].label}.`
@@ -1432,7 +1458,9 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       }
     } else {
       frag.appendChild(el('h2', '', 'Game ' + NET.code));
-      if (NET.role) {
+      if (NET.watching) {
+        note('You are watching. Both seats are taken.');
+      } else if (NET.role) {
         const ul = el('ul', 'seats');
         const mine = myColor();
         for (const c of [mine, other(mine)]) {
@@ -1445,6 +1473,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         }
         if (NET.round > 0 || NET.role === 'host') frag.appendChild(ul);
       }
+      if (NET.role === 'host' && NET.watchers.size) note(NET.watchers.size === 1 ? '1 person is watching.' : NET.watchers.size + ' people are watching.');
       note(NET.status, 'warn');
       frag.appendChild(Object.assign(el('label', 'label', 'Invite link'), { htmlFor: 'inviteInput' }));
       const row = el('div', 'btnrow');
@@ -1461,7 +1490,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       frag.appendChild(row);
       const row2 = el('div', 'btnrow');
       row2.appendChild(button('Back to games', '', leaveGame));
-      if (NET.G.phase === 'over' && NET.connected) row2.appendChild(button('Rematch (swap colors)', 'primary', rematch));
+      if (NET.G.phase === 'over' && NET.connected && !NET.watching) row2.appendChild(button('Rematch (swap colors)', 'primary', rematch));
       frag.appendChild(row2);
     }
     box.replaceChildren(frag);
@@ -1512,14 +1541,17 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   function chatState() {
     return {
       show: V.mode === 'online' && !!NET.code,
-      canSend: NET.connected,
-      reason: 'Chat opens when your opponent is connected',
-      items: NET.chat.map(m => ({ me: m.me, who: m.me ? 'You' : 'Opponent', text: String(m.text) }))
+      canSend: NET.connected && !NET.watching,
+      reason: NET.watching ? 'Watchers can read the chat' : 'Chat opens when your opponent is connected',
+      items: NET.chat.map(m => {
+        const me = m.c ? !NET.watching && m.c === myColor() : !!m.me;
+        return { me, who: me ? 'You' : NET.watching && m.c ? NAME[m.c] : 'Opponent', text: String(m.text) };
+      })
     };
   }
   function sendChat(text) {
-    send({ type: 'chat', text });
-    NET.chat.push({ me: true, text, t: Date.now() });
+    send({ type: 'chat', c: myColor(), text });
+    NET.chat.push({ c: myColor(), text, t: Date.now() });
     saveNet();
   }
   function renderChat() {
