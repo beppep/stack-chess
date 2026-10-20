@@ -685,30 +685,12 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     return { st: s.st, stack: s.stack.concat([{ ...m, player: s.cur }]), cur: other(s.cur), winner: null };
   }
 
-  // Material plus small bonuses: pawns for advancing, pieces for standing near the centre.
-  function material(st) {
+  // Score = material on the board as it stands, from the view of the player to act.
+  // Moves waiting on the stack count only once they resolve in the search tree.
+  function evaluate(s) {
     let score = 0;
-    for (let s = 0; s < 64; s++) {
-      const p = st.board[s];
-      if (!p) continue;
-      const r = s >> 3, c = s & 7;
-      let v = VAL[p.t];
-      if (p.t === 'p') v += (p.c === 'w' ? 6 - r : r - 1) * 8;
-      else if (p.t !== 'k') v += (3.5 - Math.abs(3.5 - r)) * 3 + (3.5 - Math.abs(3.5 - c)) * 4;
-      score += p.c === 'w' ? v : -v;
-    }
+    for (const p of s.st.board) if (p) score += p.c === s.cur ? VAL[p.t] : -VAL[p.t];
     return score;
-  }
-  // Score for the player to act in s. A pending stack is scored as if it resolved now.
-  function evaluate(s, ply) {
-    const t = s.stack.length ? sResolve(s) : s;
-    if (t.winner) return t.winner === s.cur ? WIN - ply : -(WIN - ply);
-    let v = material(t.st);
-    if (s.cur === 'b') v = -v;
-    const mine = kingSq(t.st.board, s.cur), theirs = kingSq(t.st.board, other(s.cur));
-    if (theirs >= 0 && attacked(t.st.board, theirs, s.cur)) v += 150;
-    if (mine >= 0 && attacked(t.st.board, mine, other(s.cur))) v -= 150;
-    return v;
   }
 
   function orderScore(s, a) {
@@ -723,7 +705,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   }
 
   function search(s, depth, alpha, beta, ply, ctx) {
-    if (depth === 0) return evaluate(s, ply);
+    if (depth === 0) return evaluate(s);
     if ((++ctx.nodes & 511) === 0 && performance.now() > ctx.deadline) throw ctx;
     const acts = ordered(s, sActions(s));
     if (!acts.length) return 0;
@@ -745,11 +727,13 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   function chooseAction(G, level) {
     const cfg = AI_LEVELS[level] || AI_LEVELS.normal;
     const s = sFrom(G);
-    const ctx = { nodes: 0, deadline: performance.now() + cfg.ms };
+    const deadline = performance.now() + cfg.ms;
+    const ctx = { nodes: 0, deadline };
     let acts = ordered(s, sActions(s));
     if (!acts.length) return null;
     let results = acts.map(a => [a, 0]);
     for (let d = 1; d <= cfg.maxDepth; d++) {
+      ctx.deadline = d === 1 ? Infinity : deadline; // never move without finishing one full look-ahead
       try {
         const round = [];
         let alpha = -Infinity;
