@@ -1253,9 +1253,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     const text = (main, sub) => `<div class="status-text"><div class="status-main">${main}</div><div class="status-sub">${sub}</div></div>`;
     if (V.preview) {
       banner.hidden = true;
-      $('resolveBtn').disabled = true;
       s.innerHTML = (G.result && G.result.winner ? chip(G.result.winner) : '') + text('Preview: after the stack resolves',
-        (G.result ? G.result.text + '. ' : '') + 'Highlighted squares show what moved; striped squares show fizzled moves. Let go to return.');
+        (G.result ? G.result.text + '. ' : '') + 'Highlighted squares show what moved; striped squares show fizzled moves. Let go or move away to return.');
       return;
     }
     const c = G.cur;
@@ -1480,7 +1479,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   renderCpuPanel();
 
   // ---------- Controls ----------
-  $('resolveBtn').addEventListener('click', () => act({ t: 'resolve' }));
+  $('resolveBtn').addEventListener('click', () => { endPreview(); act({ t: 'resolve' }); });
   // Hold to preview: resolve a copy of the game and show it until the button is released.
   function startPreview(e) {
     const G = shownGame();
@@ -1499,6 +1498,10 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   pv.addEventListener('keydown', e => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) startPreview(e); });
   pv.addEventListener('keyup', e => { if (e.key === ' ' || e.key === 'Enter') endPreview(); });
   pv.addEventListener('contextmenu', e => e.preventDefault());
+  // Hovering "Let it resolve" with a mouse previews it too.
+  const rbtn = $('resolveBtn');
+  rbtn.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse' && !rbtn.disabled) startPreview(); });
+  rbtn.addEventListener('pointerleave', endPreview);
   $('flipBtn').addEventListener('click', () => { V.flipped = !V.flipped; render(); });
   $('modeLocal').addEventListener('click', () => setMode('local'));
   $('modeOnline').addEventListener('click', () => setMode('online'));
