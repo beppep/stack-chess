@@ -263,6 +263,9 @@ details.rules b { color: var(--fg); font-weight: 700; }
 .cpu .hint { margin: 0; }
 .cpu .label { margin: 4px 0 -4px; font-size: .78rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
 
+/* Name box */
+.online input.nameinput { flex: 0 1 11rem; font-family: var(--font-body); font-weight: 700; font-size: .95rem; letter-spacing: 0; text-transform: none; }
+
 /* Chat */
 .chat { display: flex; flex-direction: column; gap: 8px; }
 .chat h2 { margin: 0; }
@@ -838,13 +841,16 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     actions: [], applied: 0, G: freshGame(),
     peer: null, conn: null, connected: false, status: '', note: '',
     token: null, guestToken: null, retryTimer: null, full: false, chat: [],
-    watching: false, watchers: new Set()   // watching: this page is a spectator; watchers: spectators connected to the host
+    watching: false, watchers: new Set(),  // watching: this page is a spectator; watchers: spectators connected to the host
+    names: {}                              // display names by color
   };
 
   const store = {
     get(k) { try { return JSON.parse(localStorage.getItem(STORE + k)); } catch (_) { return null; } },
     set(k, v) { try { localStorage.setItem(STORE + k, JSON.stringify(v)); } catch (_) {} }
   };
+  let myName = String(store.get('name') || '').slice(0, 20);
+  const cleanName = n => (typeof n === 'string' ? n.trim().slice(0, 20) : '');
   const seatsOf = () => ({ [NET.hostColor]: 'host', [other(NET.hostColor)]: 'guest' });
   const myColor = () => (NET.role === 'host' ? NET.hostColor : other(NET.hostColor));
 
@@ -852,7 +858,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     if (!NET.code) return;
     store.set('game-' + NET.code, {
       role: NET.role, hostColor: NET.hostColor, round: NET.round, actions: NET.actions,
-      token: NET.token, guestToken: NET.guestToken, chat: NET.chat.slice(-100), updatedAt: Date.now()
+      token: NET.token, guestToken: NET.guestToken, chat: NET.chat.slice(-100), names: NET.names, updatedAt: Date.now()
     });
     const recent = (store.get('recent') || []).filter(c => c !== NET.code);
     recent.unshift(NET.code);
@@ -952,11 +958,14 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       if (NET.guestToken && msg.token !== NET.guestToken) {
         // Both seats are taken, so this person watches.
         NET.watchers.add(conn);
-        conn.send({ type: 'welcome', watch: true, round: NET.round, hostColor: NET.hostColor, actions: NET.actions, chat: NET.chat.slice(-50) });
+        conn.send({ type: 'welcome', watch: true, round: NET.round, hostColor: NET.hostColor, actions: NET.actions, chat: NET.chat.slice(-50), names: NET.names });
         renderAll();
         return;
       }
       NET.guestToken = msg.token;
+      NET.names[NET.hostColor] = myName;
+      NET.names[other(NET.hostColor)] = cleanName(msg.name);
+      relay({ type: 'names', names: NET.names });
       if (NET.conn && NET.conn !== conn) NET.conn.close();
       NET.conn = conn; NET.connected = true; NET.status = '';
       // If we lost our copy (cleared storage), the guest's longer list wins.
@@ -966,15 +975,15 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         receiveList(NET.round, NET.hostColor, theirs);
       }
       saveNet();
-      conn.send({ type: 'welcome', round: NET.round, hostColor: NET.hostColor, actions: NET.actions });
+      conn.send({ type: 'welcome', round: NET.round, hostColor: NET.hostColor, actions: NET.actions, names: NET.names });
       renderAll();
       return;
     }
     if (NET.role === 'host' && NET.watchers.has(conn)) {
       if (msg.type === 'sync-req') conn.send({ type: 'sync', round: NET.round, hostColor: NET.hostColor, actions: NET.actions });
       if (msg.type === 'chat' && typeof msg.text === 'string' && msg.text.trim()) {
-        const out = { type: 'chat', c: 's', text: msg.text.slice(0, 300) };
-        NET.chat.push({ c: 's', text: out.text, t: Date.now() });
+        const out = { type: 'chat', c: 's', text: msg.text.slice(0, 300), n: cleanName(msg.n) };
+        NET.chat.push({ c: 's', text: out.text, n: out.n, t: Date.now() });
         saveNet();
         for (const c of [NET.conn, ...NET.watchers]) if (c && c !== conn && c.open) { try { c.send(out); } catch (_) {} }
         renderChat();
@@ -989,6 +998,9 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         NET.watching = !!msg.watch;
         if (NET.watching && Array.isArray(msg.chat)) NET.chat = msg.chat.filter(m => m && typeof m.text === 'string');
         receiveList(msg.round, msg.hostColor, msg.actions);
+        if (msg.names && typeof msg.names === 'object') NET.names = { w: cleanName(msg.names.w), b: cleanName(msg.names.b) };
+        if (!NET.watching) NET.names[myColor()] = myName;
+        saveNet();
         orient();
         renderAll();
         break;
@@ -1009,10 +1021,28 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       case 'chat':
         if (typeof msg.text === 'string' && msg.text.trim()) {
           const c = ['w', 'b', 's'].includes(msg.c) ? msg.c : other(myColor()); // s = spectator
-          NET.chat.push({ c, text: msg.text.slice(0, 300), t: Date.now() });
-          relay({ type: 'chat', c, text: msg.text.slice(0, 300) });
+          const n = cleanName(msg.n);
+          NET.chat.push({ c, text: msg.text.slice(0, 300), n, t: Date.now() });
+          relay({ type: 'chat', c, text: msg.text.slice(0, 300), n });
           saveNet();
           renderChat();
+        }
+        break;
+      case 'name':
+        // the guest renamed themselves; the host shares the new names with everyone
+        if (NET.role === 'host') {
+          NET.names[other(NET.hostColor)] = cleanName(msg.name);
+          saveNet();
+          send({ type: 'names', names: NET.names });
+          renderAll();
+        }
+        break;
+      case 'names':
+        if (msg.names && typeof msg.names === 'object') {
+          NET.names = { w: cleanName(msg.names.w), b: cleanName(msg.names.b) };
+          if (!NET.watching) NET.names[myColor()] = myName;
+          saveNet();
+          renderAll();
         }
         break;
       case 'sync-req':
@@ -1103,7 +1133,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     let opened = false;
     conn.on('open', () => {
       opened = true;
-      conn.send({ type: 'join', token: NET.token, round: NET.round, actions: NET.actions });
+      conn.send({ type: 'join', token: NET.token, round: NET.round, actions: NET.actions, name: myName });
     });
     conn.on('data', msg => onMessage(msg, conn));
     conn.on('close', () => {
@@ -1153,6 +1183,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     }
     if (NET.role === 'guest' && !NET.token) NET.token = randomToken();
     NET.chat = saved && !(opts && opts.create) && Array.isArray(saved.chat) ? saved.chat : [];
+    NET.names = saved && !(opts && opts.create) && saved.names ? saved.names : {};
+    if (NET.role === 'host') NET.names[NET.hostColor] = myName;
     NET.G = replay(NET.actions, seatsOf());
     NET.applied = NET.actions.length;
     if (NET.role === 'host' || saved) orient();
@@ -1374,8 +1406,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     }
     if (online && !myColors().includes(c) && G.phase !== 'resolving') {
       const sub = G.phase === 'respond'
-        ? `Your opponent is deciding whether to respond to ${G.stack[G.stack.length - 1].label}.`
-        : 'Waiting for your opponent to move.';
+        ? `${NET.names[c] || 'Your opponent'} is deciding whether to respond to ${G.stack[G.stack.length - 1].label}.`
+        : `Waiting for ${NET.names[c] || 'your opponent'} to move.`;
       s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`, sub);
       return;
     }
@@ -1447,14 +1479,41 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     return b;
   }
 
+  const nameInput = document.createElement('input');
+  nameInput.id = 'nameInput';
+  nameInput.className = 'nameinput';
+  nameInput.maxLength = 20;
+  nameInput.autocomplete = 'off';
+  nameInput.placeholder = 'Type your name';
+  nameInput.setAttribute('aria-label', 'Your name');
+  nameInput.value = myName;
+  nameInput.addEventListener('input', () => {
+    myName = cleanName(nameInput.value);
+    store.set('name', myName);
+    if (NET.code && NET.role && !NET.watching && NET.round > 0) NET.names[myColor()] = myName;
+  });
+  nameInput.addEventListener('change', () => {
+    if (NET.code && !NET.watching) {
+      if (NET.role === 'host') send({ type: 'names', names: NET.names });
+      else send({ type: 'name', name: myName });
+      saveNet();
+    }
+    renderAll();
+  });
+  nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') nameInput.blur(); });
+
   function renderOnline() {
     if (V.mode !== 'online') return;
+    if (document.activeElement === nameInput) return; // don't redraw under someone who is typing their name
     const box = $('onlineBody');
     const frag = el('div', 'online');
     const note = (txt, cls) => { if (txt) frag.appendChild(el('p', 'note ' + (cls || ''), txt)); };
 
     if (!NET.code) {
       frag.appendChild(el('h2', '', 'Online'));
+      const nameRow = el('div', 'btnrow');
+      nameRow.append(Object.assign(el('label', 'label', 'Your name'), { htmlFor: 'nameInput' }), nameInput);
+      frag.appendChild(nameRow);
       note('No sign-in needed. Your browser connects straight to your opponent\'s, so keep this page open while you play.');
       frag.appendChild(el('p', 'label', 'New game, you play'));
       const row = el('div', 'btnrow');
@@ -1494,16 +1553,30 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     } else {
       frag.appendChild(el('h2', '', 'Game ' + NET.code));
       if (NET.watching) {
+        const ul = el('ul', 'seats');
+        for (const c of ['w', 'b']) {
+          const li = el('li');
+          li.innerHTML = `<span class="chip ${c} small">${GLYPH.k}\uFE0E</span>`;
+          li.appendChild(el('span', 'seatname', `${NET.names[c] || 'Player'} (${NAME[c]})`));
+          ul.appendChild(li);
+        }
+        frag.appendChild(ul);
         note('You are watching. Both seats are taken.');
+        const nameRow = el('div', 'btnrow');
+        nameRow.append(Object.assign(el('label', 'label', 'Your name in chat'), { htmlFor: 'nameInput' }), nameInput);
+        frag.appendChild(nameRow);
       } else if (NET.role) {
         const ul = el('ul', 'seats');
         const mine = myColor();
         for (const c of [mine, other(mine)]) {
           const li = el('li');
           li.innerHTML = `<span class="chip ${c} small">${GLYPH.k}︎</span>`;
-          const who = c === mine ? 'You' : 'Opponent';
-          const state = c === mine ? '' : (NET.connected ? ' · connected' : (NET.role === 'host' && !NET.guestToken ? ' · not joined yet' : ' · not connected'));
-          li.appendChild(el('span', 'seatname', `${who} (${NAME[c]})${state}`));
+          if (c === mine) {
+            li.append(nameInput, el('span', 'seatname', `(${NAME[c]}, you)`));
+          } else {
+            const state = NET.connected ? ' · connected' : (NET.role === 'host' && !NET.guestToken ? ' · not joined yet' : ' · not connected');
+            li.appendChild(el('span', 'seatname', `${NET.names[c] || 'Opponent'} (${NAME[c]})${state}`));
+          }
           ul.appendChild(li);
         }
         if (NET.round > 0 || NET.role === 'host') frag.appendChild(ul);
@@ -1579,16 +1652,17 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       canSend: NET.connected,
       reason: NET.watching ? 'Reconnecting to the game…' : 'Chat opens when your opponent is connected',
       items: NET.chat.map(m => {
-        if (m.c === 's') return { me: !!m.mine, who: m.mine ? 'You' : 'Spectator', text: String(m.text) };
+        if (m.c === 's') return { me: !!m.mine, who: m.n || (m.mine ? 'You' : 'Spectator'), text: String(m.text) };
         const me = m.c ? !NET.watching && m.c === myColor() : !!m.me;
-        return { me, who: me ? 'You' : NET.watching && m.c ? NAME[m.c] : 'Opponent', text: String(m.text) };
+        const fallback = me ? 'You' : NET.watching && m.c ? NAME[m.c] : 'Opponent';
+        return { me, who: m.n || (m.c && NET.names[m.c]) || fallback, text: String(m.text) };
       })
     };
   }
   function sendChat(text) {
     const c = NET.watching ? 's' : myColor();
-    send({ type: 'chat', c, text });
-    NET.chat.push({ c, mine: NET.watching, text, t: Date.now() });
+    send({ type: 'chat', c, text, n: myName });
+    NET.chat.push({ c, mine: NET.watching, text, n: myName, t: Date.now() });
     saveNet();
   }
   function renderChat() {
