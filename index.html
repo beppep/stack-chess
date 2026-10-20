@@ -347,7 +347,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
             <li><b>Responses</b> are chosen from the board as it is now, before anything on the stack happens.</li>
             <li><b>One move per piece.</b> A piece that already has a move on the stack can't be given another one until the stack resolves. Those pieces are dimmed.</li>
             <li><b>Online.</b> Create a game and send the invite link. No sign-in needed: the two browsers connect directly, so both players keep the page open while playing.</li>
-            <li><b>Kings can be captured.</b> If an exposed king can be taken, taking it is a legal move, and your opponent can respond to save it. A captured king loses the game. Checkmate and stalemate work as usual on a normal turn.</li>
+            <li><b>No check rules.</b> You may move into check, leave your king attacked, or castle through attacked squares. You win by capturing the king, and your opponent can respond to save it. There is no checkmate.</li>
           </ul>
         </details>
       </div>
@@ -437,13 +437,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         if (!q || q.c !== col) add(t);
       }
       if (p.t === 'k') {
-        const home = col === 'w' ? 60 : 4, opp = other(col);
-        if (from === home && !attacked(b, home, opp)) {
+        const home = col === 'w' ? 60 : 4;
+        if (from === home) {
           const rk = b[home + 3], rq = b[home - 4];
-          if (st.castle[col + 'K'] && rk && rk.t === 'r' && rk.c === col && !b[home + 1] && !b[home + 2]
-              && !attacked(b, home + 1, opp) && !attacked(b, home + 2, opp)) add(home + 2, { flag: 'castleK' });
-          if (st.castle[col + 'Q'] && rq && rq.t === 'r' && rq.c === col && !b[home - 1] && !b[home - 2] && !b[home - 3]
-              && !attacked(b, home - 1, opp) && !attacked(b, home - 2, opp)) add(home - 2, { flag: 'castleQ' });
+          if (st.castle[col + 'K'] && rk && rk.t === 'r' && rk.c === col && !b[home + 1] && !b[home + 2]) add(home + 2, { flag: 'castleK' });
+          if (st.castle[col + 'Q'] && rq && rq.t === 'r' && rq.c === col && !b[home - 1] && !b[home - 2] && !b[home - 3]) add(home - 2, { flag: 'castleQ' });
         }
       }
     } else {
@@ -477,18 +475,12 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
 
   const kingSq = (b, color) => b.findIndex(x => x && x.t === 'k' && x.c === color);
 
+  // No check rules: every move a piece can make is allowed, including moving into check.
   function legalMoves(st, color) {
     const res = [];
     for (let s = 0; s < 64; s++) {
       const p = st.board[s];
-      if (!p || p.c !== color) continue;
-      for (const m of pieceMoves(st, s)) {
-        const target = st.board[m.to];
-        if (target && target.t === 'k') { res.push(m); continue; } // taking the king is always allowed
-        const n = cloneState(st); applyMove(n, m);
-        const ks = kingSq(n.board, color);
-        if (ks < 0 || !attacked(n.board, ks, other(color))) res.push(m);
-      }
+      if (p && p.c === color) res.push(...pieceMoves(st, s));
     }
     return res;
   }
@@ -593,16 +585,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     checkNormalTurnEnd(G);
   }
 
+  // Games are won by capturing the king. Only a player with no possible move at all ends it in a draw.
   function checkNormalTurnEnd(G) {
     if (legalMoves(G.st, G.cur).length) return;
-    const ks = kingSq(G.st.board, G.cur);
-    if (ks >= 0 && attacked(G.st.board, ks, other(G.cur))) {
-      G.result = { winner: other(G.cur), text: `Checkmate. ${NAME[other(G.cur)]} wins` };
-      G.log.push({ player: other(G.cur), html: `<b>Checkmate.</b> ${NAME[other(G.cur)]} wins` });
-    } else {
-      G.result = { winner: null, text: 'Stalemate. The game is drawn' };
-      G.log.push({ player: G.cur, html: '<b>Stalemate.</b> Draw' });
-    }
+    G.result = { winner: null, text: `${NAME[G.cur]} has no possible move. The game is drawn` };
+    G.log.push({ player: G.cur, html: `<b>No possible move.</b> Draw` });
     G.phase = 'over';
   }
 
@@ -1129,7 +1116,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       main = online ? `Your move (${NAME[c]})` : `${NAME[c]} to move`;
       const ks = kingSq(G.st.board, c);
       const inCheck = ks >= 0 && attacked(G.st.board, ks, other(c));
-      sub = inCheck ? 'You are in check. Your move goes on the stack, and ' + NAME[other(c)] + ' may respond.'
+      sub = inCheck ? 'Your king is under attack and can be captured. Your move goes on the stack, and ' + NAME[other(c)] + ' may respond.'
                     : `Pick a piece. ${NAME[other(c)]} gets a chance to respond before it happens.`;
     } else if (G.phase === 'respond') {
       main = `${NAME[c]}: respond or let it resolve`;
