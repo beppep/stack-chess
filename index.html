@@ -200,7 +200,7 @@ button.btn.warn { border-color: var(--fizzle); color: var(--fizzle); }
   margin: 0 0 2px; font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; letter-spacing: .08em; text-transform: uppercase;
 }
 .panel .hint { margin: 0 0 10px; color: var(--muted); font-size: .9rem; }
-#resolveBtn { width: 100%; }
+#resolveBtn { width: 100%; min-height: 5.5rem; font-size: 1.1rem; }
 #previewBtn { width: 100%; margin-top: 8px; touch-action: none; user-select: none; -webkit-user-select: none; }
 #previewBtn.held { background: var(--sel); color: #1a1408; border-color: transparent; }
 
@@ -1277,7 +1277,18 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     renderStatus(real);
     renderStack(real);
     renderLog(real);
+    alignStack();
   }
+
+  // Line the stack panel up with the top of the board when they sit side by side.
+  function alignStack() {
+    const col = document.querySelector('.stackcol'), boardCol = document.querySelector('.board-col'), frame = $('frame');
+    const sideBySide = window.matchMedia('(min-width: 861px)').matches; // matches the CSS breakpoint
+    col.style.marginTop = sideBySide ? Math.max(0, frame.getBoundingClientRect().top - boardCol.getBoundingClientRect().top) + 'px' : '';
+  }
+  window.addEventListener('resize', alignStack);
+  if (window.ResizeObserver) new ResizeObserver(() => alignStack()).observe(document.querySelector('.table'));
+  if (document.fonts) document.fonts.ready.then(alignStack);
 
   function renderArrows(G) {
     const NS = 'http://www.w3.org/2000/svg';
