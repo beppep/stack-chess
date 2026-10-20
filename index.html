@@ -51,7 +51,7 @@ body {
   padding-right: max(16px, env(safe-area-inset-right, 0px));
   padding-block: 20px 40px;
 }
-.app { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.app { max-width: 1320px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
 header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
 h1 {
   font-family: var(--font-display); font-weight: 700; font-size: clamp(1.7rem, 4vw, 2.4rem);
@@ -62,10 +62,21 @@ h1 span { color: var(--amber); }
 
 .table {
   display: grid;
-  grid-template-columns: minmax(0, 620px) minmax(270px, 360px);
+  grid-template-columns: minmax(230px, 290px) minmax(0, 600px) minmax(260px, 330px);
+  grid-template-areas: "stack board side";
   gap: 24px; justify-content: center; align-items: start;
 }
-@media (max-width: 920px) { .table { grid-template-columns: minmax(0, 620px); } }
+.stackcol { grid-area: stack; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.stackcol .stack { margin-top: 12px; }
+.board-col { grid-area: board; }
+.side { grid-area: side; }
+@media (max-width: 1180px) {
+  .table { grid-template-columns: minmax(230px, 290px) minmax(0, 600px); grid-template-areas: "stack board" "side side"; }
+  .table .side { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); align-items: start; }
+}
+@media (max-width: 860px) {
+  .table { grid-template-columns: minmax(0, 600px); grid-template-areas: "board" "stack" "side"; }
+}
 .board-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
 /* Status line */
@@ -189,7 +200,7 @@ button.btn.warn { border-color: var(--fizzle); color: var(--fizzle); }
   margin: 0 0 2px; font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; letter-spacing: .08em; text-transform: uppercase;
 }
 .panel .hint { margin: 0 0 10px; color: var(--muted); font-size: .9rem; }
-#resolveBtn { width: 100%; margin-top: 12px; }
+#resolveBtn { width: 100%; }
 #previewBtn { width: 100%; margin-top: 8px; touch-action: none; user-select: none; -webkit-user-select: none; }
 #previewBtn.held { background: var(--sel); color: #1a1408; border-color: transparent; }
 
@@ -318,6 +329,25 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   </header>
 
   <main class="table">
+    <aside class="stackcol" aria-label="The stack">
+      <div class="panel">
+        <h2>The stack</h2>
+        <p class="hint">Number 1 resolves first. A move that is no longer possible fizzles.</p>
+        <button class="btn primary" id="resolveBtn" type="button" disabled>Let it resolve</button>
+        <button class="btn" id="previewBtn" type="button" disabled>Hold to preview</button>
+        <ol class="stack" id="stack"></ol>
+      </div>
+
+      <div class="panel chat" id="chatPanel" hidden>
+        <h2>Chat</h2>
+        <ol class="chatlog" id="chatLog" aria-live="polite"></ol>
+        <form class="btnrow" id="chatForm">
+          <input id="chatInput" maxlength="300" autocomplete="off" placeholder="Say something" aria-label="Chat message">
+          <button class="btn small" id="chatSend" type="submit">Send</button>
+        </form>
+      </div>
+    </aside>
+
     <section class="board-col" aria-label="Board">
       <div class="modebar" role="tablist" aria-label="Where you play">
         <button type="button" role="tab" id="modeLocal" aria-selected="true">Same screen</button>
@@ -369,23 +399,6 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
 
       <div class="panel" id="onlinePanel" hidden>
         <div id="onlineBody"></div>
-      </div>
-
-      <div class="panel">
-        <h2>The stack</h2>
-        <p class="hint">Top card resolves first. A move that is no longer possible fizzles.</p>
-        <ol class="stack" id="stack"></ol>
-        <button class="btn primary" id="resolveBtn" type="button" disabled>Let it resolve</button>
-        <button class="btn" id="previewBtn" type="button" disabled>Hold to preview</button>
-      </div>
-
-      <div class="panel chat" id="chatPanel" hidden>
-        <h2>Chat</h2>
-        <ol class="chatlog" id="chatLog" aria-live="polite"></ol>
-        <form class="btnrow" id="chatForm">
-          <input id="chatInput" maxlength="300" autocomplete="off" placeholder="Say something" aria-label="Chat message">
-          <button class="btn small" id="chatSend" type="submit">Send</button>
-        </form>
       </div>
 
       <div class="panel">
