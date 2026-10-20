@@ -1161,11 +1161,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   function render() {
     const real = shownGame();
     const G = V.preview || real, st = G.st;
-    legalNow = !V.preview && canAct() ? availableMoves(G) : [];
+    legalNow = canAct() ? availableMoves(real) : [];
     $('previewBtn').disabled = !V.preview && (!real.stack.length || V.busy);
     $('previewBtn').classList.toggle('held', !!V.preview);
-    if (V.sel !== null && !legalNow.length) clearSel();
-    const targets = new Map(V.selMoves.map(m => [m.to, m]));
+    if (V.sel !== null && !V.preview && !legalNow.length) clearSel();
+    const targets = new Map(V.preview ? [] : V.selMoves.map(m => [m.to, m]));
     const checkSq = [];
     for (const c of ['w', 'b']) { const k = kingSq(st.board, c); if (k >= 0 && attacked(st.board, k, other(c))) checkSq.push(k); }
     const resolvingEntry = G.stack.find(e => e.state === 'resolving');
@@ -1195,7 +1195,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     $('modeCpu').setAttribute('aria-selected', V.mode === 'cpu');
     $('onlinePanel').hidden = V.mode !== 'online';
     renderArrows(G);
-    renderStatus(G);
+    renderStatus(real);
     renderStack(real);
     renderLog(real);
   }
@@ -1251,12 +1251,6 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     const s = $('status'), banner = $('banner');
     const chip = c => `<span class="chip ${c}">${GLYPH.k}︎</span>`;
     const text = (main, sub) => `<div class="status-text"><div class="status-main">${main}</div><div class="status-sub">${sub}</div></div>`;
-    if (V.preview) {
-      banner.hidden = true;
-      s.innerHTML = (G.result && G.result.winner ? chip(G.result.winner) : '') + text('Preview: after the stack resolves',
-        (G.result ? G.result.text + '. ' : '') + 'Highlighted squares show what moved; striped squares show fizzled moves. Let go or move away to return.');
-      return;
-    }
     const c = G.cur;
     const rb = $('resolveBtn');
     const online = V.mode === 'online';
@@ -1488,7 +1482,6 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     const P = JSON.parse(JSON.stringify(G));
     drain(resolveGen(P));
     V.preview = P;
-    clearSel();
     render();
   }
   function endPreview() { if (V.preview) { V.preview = null; render(); } }
