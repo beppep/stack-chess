@@ -114,6 +114,11 @@ h1 span { color: var(--amber); }
 .pc.w { color: var(--piece-w); -webkit-text-stroke: 0.32cqw var(--piece-w-edge); paint-order: stroke fill; text-shadow: 0 0.4cqw 0.6cqw rgba(0,0,0,.35); }
 .pc.b { color: var(--piece-b); -webkit-text-stroke: 0.22cqw var(--piece-b-edge); paint-order: stroke fill; text-shadow: 0 0.4cqw 0.6cqw rgba(0,0,0,.35); }
 .sq.onstack .pc { opacity: .5; }
+.sq.dies { box-shadow: inset 0 0 0 0.7cqw var(--fizzle); }
+.sq .ghost {
+  position: absolute; right: 0.5cqw; top: 0.2cqw; font-family: var(--font-glyph); font-size: 4.6cqw; line-height: 1;
+  color: var(--fizzle); text-decoration: line-through; text-decoration-thickness: 0.4cqw; pointer-events: none;
+}
 .sq.sel { box-shadow: inset 0 0 0 0.6cqw var(--sel); }
 .sq.sel .pc { transform: translateY(-0.8cqw) scale(1.06); }
 .sq.target::after {
@@ -1239,8 +1244,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       for (const t of G.trail) { if (t.ok && (t.from === s || t.to === s)) cls.push('trail'); if (!t.ok && t.from === s) cls.push('fizz'); }
       if (resolvingEntry && (resolvingEntry.from === s || resolvingEntry.to === s)) cls.push('sel');
       if (p && G.phase === 'respond' && G.stack.some(e => e.pieceId === p.id)) cls.push('onstack');
+      const dead = V.preview && V.previewDead.find(d => d.sq === s);
+      if (dead) cls.push('dies');
       el.className = cls.join(' ');
       let html = p ? `<span class="pc ${p.c}">${GLYPH[p.t]}︎</span>` : '';
+      if (dead) html += `<span class="ghost" title="dies">${GLYPH[dead.t]}\uFE0E</span>`;
       if (r === 7) html += `<span class="coord file">${FILES[s & 7]}</span>`;
       if (c === 0) html += `<span class="coord rank">${8 - (s >> 3)}</span>`;
       el.innerHTML = html;
@@ -1267,10 +1275,6 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       g.setAttribute('class', `arrow ${e.player} ${e.state}`);
       const [x1, y1] = center(e.from), [x2, y2] = center(e.to);
       let pts = [[x1, y1]];
-      if (e.pt === 'n') {
-        // L-shaped: long leg first
-        if (Math.abs(x2 - x1) > Math.abs(y2 - y1)) pts.push([x2, y1]); else pts.push([x1, y2]);
-      }
       pts.push([x2, y2]);
       // Shorten the final segment so the head tip sits just short of the target centre
       const [px, py] = pts[pts.length - 2];
@@ -1603,6 +1607,10 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     const P = JSON.parse(JSON.stringify(G));
     drain(resolveGen(P));
     V.preview = P;
+    // Pieces on the board now that are gone once the stack resolves.
+    const alive = new Set(P.st.board.filter(Boolean).map(p => p.id));
+    V.previewDead = [];
+    G.st.board.forEach((p, sq) => { if (p && !alive.has(p.id)) V.previewDead.push({ sq, t: p.t }); });
     render();
   }
   function endPreview() { if (V.preview) { V.preview = null; render(); } }
