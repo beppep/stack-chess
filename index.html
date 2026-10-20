@@ -247,6 +247,20 @@ details.rules b { color: var(--fg); font-weight: 700; }
 .cpu .hint { margin: 0; }
 .cpu .label { margin: 4px 0 -4px; font-size: .78rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
 
+/* Chat */
+.chat { display: flex; flex-direction: column; gap: 8px; }
+.chat h2 { margin: 0; }
+.chatlog { list-style: none; margin: 0; padding: 0; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; font-size: .95rem; overflow-wrap: anywhere; }
+.chatlog .who { font-weight: 700; }
+.chatlog .me .who { color: var(--amber); }
+.chatlog .them .who { color: var(--teal); }
+.chatlog .empty { color: var(--muted); font-style: italic; }
+#chatInput {
+  flex: 1; min-width: 0; font-family: var(--font-body); font-size: .95rem; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
+}
+#chatInput:focus-visible { outline: 2px solid var(--sel); outline-offset: 1px; }
+
 /* Online panel */
 .online { display: flex; flex-direction: column; gap: 10px; }
 .online h2 { margin: 0; }
@@ -350,6 +364,15 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
 
       <div class="panel" id="onlinePanel" hidden>
         <div id="onlineBody"></div>
+      </div>
+
+      <div class="panel chat" id="chatPanel" hidden>
+        <h2>Chat</h2>
+        <ol class="chatlog" id="chatLog" aria-live="polite"></ol>
+        <form class="btnrow" id="chatForm">
+          <input id="chatInput" maxlength="300" autocomplete="off" placeholder="Say something" aria-label="Chat message">
+          <button class="btn small" id="chatSend" type="submit">Send</button>
+        </form>
       </div>
 
       <div class="panel">
@@ -796,7 +819,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     code: null, role: null, hostColor: 'w', round: 1,
     actions: [], applied: 0, G: freshGame(),
     peer: null, conn: null, connected: false, status: '', note: '',
-    token: null, guestToken: null, retryTimer: null, full: false
+    token: null, guestToken: null, retryTimer: null, full: false, chat: []
   };
 
   const store = {
@@ -810,7 +833,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     if (!NET.code) return;
     store.set('game-' + NET.code, {
       role: NET.role, hostColor: NET.hostColor, round: NET.round, actions: NET.actions,
-      token: NET.token, guestToken: NET.guestToken, updatedAt: Date.now()
+      token: NET.token, guestToken: NET.guestToken, chat: NET.chat.slice(-100), updatedAt: Date.now()
     });
     const recent = (store.get('recent') || []).filter(c => c !== NET.code);
     recent.unshift(NET.code);
@@ -941,6 +964,13 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         else if (!(msg.n < NET.actions.length && sameAct(NET.actions[msg.n], msg.a))) send({ type: 'sync-req' });
         break;
       }
+      case 'chat':
+        if (typeof msg.text === 'string' && msg.text.trim()) {
+          NET.chat.push({ me: false, text: msg.text.slice(0, 300), t: Date.now() });
+          saveNet();
+          renderChat();
+        }
+        break;
       case 'sync-req':
         send({ type: 'sync', round: NET.round, hostColor: NET.hostColor, actions: NET.actions });
         break;
@@ -1075,6 +1105,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       NET.token = randomToken(); NET.guestToken = null;
     }
     if (NET.role === 'guest' && !NET.token) NET.token = randomToken();
+    NET.chat = saved && !(opts && opts.create) && Array.isArray(saved.chat) ? saved.chat : [];
     NET.G = replay(NET.actions, seatsOf());
     NET.applied = NET.actions.length;
     if (NET.role === 'host' || saved) orient();
@@ -1156,7 +1187,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   }
   $('promo').addEventListener('click', e => { if (e.target.id === 'promo') $('promo').hidden = true; });
 
-  function renderAll() { render(); renderOnline(); }
+  function renderAll() { render(); renderOnline(); renderChat(); }
 
   function render() {
     const real = shownGame();
@@ -1476,6 +1507,59 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     CPU.level = b.dataset.l; renderCpuPanel();
   }));
   renderCpuPanel();
+
+  // ---------- Chat ----------
+  function chatState() {
+    return {
+      show: V.mode === 'online' && !!NET.code,
+      canSend: NET.connected,
+      reason: 'Chat opens when your opponent is connected',
+      items: NET.chat.map(m => ({ me: m.me, who: m.me ? 'You' : 'Opponent', text: String(m.text) }))
+    };
+  }
+  function sendChat(text) {
+    send({ type: 'chat', text });
+    NET.chat.push({ me: true, text, t: Date.now() });
+    saveNet();
+  }
+  function renderChat() {
+    const c = chatState();
+    $('chatPanel').hidden = !c.show;
+    if (!c.show) return;
+    const ol = $('chatLog');
+    const atBottom = ol.scrollHeight - ol.scrollTop - ol.clientHeight < 30;
+    ol.replaceChildren();
+    if (!c.items.length) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'No messages yet.';
+      ol.appendChild(li);
+    }
+    for (const m of c.items) {
+      const li = document.createElement('li');
+      li.className = m.me ? 'me' : 'them';
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = m.who + ': ';
+      const text = document.createElement('span');
+      text.textContent = m.text;
+      li.append(who, text);
+      ol.appendChild(li);
+    }
+    if (atBottom) ol.scrollTop = ol.scrollHeight;
+    $('chatInput').disabled = !c.canSend;
+    $('chatSend').disabled = !c.canSend;
+    $('chatInput').placeholder = c.canSend ? 'Say something' : c.reason;
+  }
+  $('chatForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const inp = $('chatInput');
+    const text = inp.value.trim().slice(0, 300);
+    if (!text || !chatState().canSend) return;
+    inp.value = '';
+    sendChat(text);
+    renderChat();
+  });
 
   // ---------- Controls ----------
   $('resolveBtn').addEventListener('click', () => { endPreview(); act({ t: 'resolve' }); });
