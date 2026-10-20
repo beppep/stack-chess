@@ -972,6 +972,13 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     }
     if (NET.role === 'host' && NET.watchers.has(conn)) {
       if (msg.type === 'sync-req') conn.send({ type: 'sync', round: NET.round, hostColor: NET.hostColor, actions: NET.actions });
+      if (msg.type === 'chat' && typeof msg.text === 'string' && msg.text.trim()) {
+        const out = { type: 'chat', c: 's', text: msg.text.slice(0, 300) };
+        NET.chat.push({ c: 's', text: out.text, t: Date.now() });
+        saveNet();
+        for (const c of [NET.conn, ...NET.watchers]) if (c && c !== conn && c.open) { try { c.send(out); } catch (_) {} }
+        renderChat();
+      }
       return;
     }
     if (conn !== NET.conn && msg.type !== 'welcome' && msg.type !== 'full') return;
@@ -1001,7 +1008,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       }
       case 'chat':
         if (typeof msg.text === 'string' && msg.text.trim()) {
-          const c = msg.c === 'w' || msg.c === 'b' ? msg.c : other(myColor());
+          const c = ['w', 'b', 's'].includes(msg.c) ? msg.c : other(myColor()); // s = spectator
           NET.chat.push({ c, text: msg.text.slice(0, 300), t: Date.now() });
           relay({ type: 'chat', c, text: msg.text.slice(0, 300) });
           saveNet();
@@ -1569,17 +1576,19 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   function chatState() {
     return {
       show: V.mode === 'online' && !!NET.code,
-      canSend: NET.connected && !NET.watching,
-      reason: NET.watching ? 'Watchers can read the chat' : 'Chat opens when your opponent is connected',
+      canSend: NET.connected,
+      reason: NET.watching ? 'Reconnecting to the game…' : 'Chat opens when your opponent is connected',
       items: NET.chat.map(m => {
+        if (m.c === 's') return { me: !!m.mine, who: m.mine ? 'You' : 'Spectator', text: String(m.text) };
         const me = m.c ? !NET.watching && m.c === myColor() : !!m.me;
         return { me, who: me ? 'You' : NET.watching && m.c ? NAME[m.c] : 'Opponent', text: String(m.text) };
       })
     };
   }
   function sendChat(text) {
-    send({ type: 'chat', c: myColor(), text });
-    NET.chat.push({ c: myColor(), text, t: Date.now() });
+    const c = NET.watching ? 's' : myColor();
+    send({ type: 'chat', c, text });
+    NET.chat.push({ c, mine: NET.watching, text, t: Date.now() });
     saveNet();
   }
   function renderChat() {
