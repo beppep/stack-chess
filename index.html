@@ -660,11 +660,17 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       stack: G.stack.map(e => ({ from: e.from, to: e.to, pieceId: e.pieceId, flag: e.flag, capSq: e.capSq, capId: e.capId, promoTo: e.promoTo, player: e.player }))
     };
   }
+  // A turn is either a response (a move on top of the stack) or, when the stack is not empty,
+  // letting it resolve and then making a move on the resulting board.
   function sActions(s) {
     const used = new Set(s.stack.map(e => e.pieceId));
     const out = [];
-    if (s.stack.length) out.push({ t: 'resolve' });
     for (const m of legalMoves(s.st, s.cur)) if (!used.has(m.pieceId)) out.push({ t: 'move', m });
+    if (s.stack.length) {
+      const r = sResolve(s);
+      if (r.winner) out.push({ t: 'resolve', r });
+      else for (const m of legalMoves(r.st, r.cur)) out.push({ t: 'resolve-move', r, m });
+    }
     return out;
   }
   function sResolve(s) {
@@ -679,10 +685,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     return { st, stack: [], cur: s.cur, winner };
   }
   function sApply(s, a) {
-    if (a.t === 'resolve') return sResolve(s);
+    if (a.t === 'resolve') return a.r;
+    const base = a.t === 'resolve-move' ? a.r : s;
     const m = a.m.promo ? { ...a.m, promoTo: 'q' } : a.m;
     // Declaring doesn't touch the board, so the board is shared until something resolves.
-    return { st: s.st, stack: s.stack.concat([{ ...m, player: s.cur }]), cur: other(s.cur), winner: null };
+    return { st: base.st, stack: base.stack.concat([{ ...m, player: s.cur }]), cur: other(s.cur), winner: null };
   }
 
   // Score = material on the board as it stands, from the view of the player to act.
@@ -694,8 +701,9 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   }
 
   function orderScore(s, a) {
-    if (a.t === 'resolve') return 400;
-    const target = s.st.board[a.m.to], mover = s.st.board[a.m.from];
+    if (a.t === 'resolve') return WIN;
+    const board = a.t === 'resolve-move' ? a.r.st.board : s.st.board;
+    const target = board[a.m.to], mover = board[a.m.from];
     if (!target) return a.m.promo ? 800 : 0;
     if (target.t === 'k') return WIN;
     return VAL[target.t] * 10 - VAL[mover.t];
@@ -764,7 +772,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       }
     }
     if (pick.t === 'resolve') return { t: 'resolve' };
-    return pick.m.promo ? { t: 'move', from: pick.m.from, to: pick.m.to, p: 'q' } : { t: 'move', from: pick.m.from, to: pick.m.to };
+    const move = pick.m.promo ? { t: 'move', from: pick.m.from, to: pick.m.to, p: 'q' } : { t: 'move', from: pick.m.from, to: pick.m.to };
+    return pick.t === 'resolve-move' ? { t: 'resolve', then: move } : move;
   }
 
   // ---------- View state ----------
@@ -1428,6 +1437,10 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       if (game !== CG || V.mode !== 'cpu' || !a) { render(); cpuTurn(); return; }
       const gen = startAction(CG, a);
       if (gen) await animate(gen); else render();
+      if (a.then && game === CG && V.mode === 'cpu') {
+        const gen2 = startAction(CG, a.then);
+        if (gen2) await animate(gen2); else render();
+      }
       cpuTurn();
     }, 80);
   }
