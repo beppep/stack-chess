@@ -692,11 +692,12 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     return { st: base.st, stack: base.stack.concat([{ ...m, player: s.cur }]), cur: other(s.cur), winner: null };
   }
 
-  // Score = material on the board as it stands, from the view of the player to act.
-  // Moves waiting on the stack count only once they resolve in the search tree.
+  // Score = resolve whatever is on the stack, then count material, from the view of the player to act.
   function evaluate(s) {
+    const t = s.stack.length ? sResolve(s) : s;
+    if (t.winner) return t.winner === s.cur ? WIN : -WIN;
     let score = 0;
-    for (const p of s.st.board) if (p) score += p.c === s.cur ? VAL[p.t] : -VAL[p.t];
+    for (const p of t.st.board) if (p) score += p.c === s.cur ? VAL[p.t] : -VAL[p.t];
     return score;
   }
 
