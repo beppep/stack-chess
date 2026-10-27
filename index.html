@@ -266,6 +266,25 @@ details.rules b { color: var(--fg); font-weight: 700; }
 /* Name box */
 .online input.nameinput { flex: 0 1 11rem; font-family: var(--font-body); font-weight: 700; font-size: .95rem; letter-spacing: 0; text-transform: none; }
 
+/* Chess clock */
+.clocks { display: flex; gap: 10px; }
+.clk {
+  flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px;
+}
+.clk .who { font-size: .8rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.clk .t { margin-left: auto; font-family: var(--font-mono); font-weight: 600; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+.clk.active.w { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
+.clk.active.b { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
+.clk:not(.active) .t { opacity: .6; }
+.clk.low .t { color: var(--fizzle); opacity: 1; }
+.clocksel { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-weight: 700; font-size: .95rem; }
+.clocksel select {
+  font: inherit; font-weight: 400; color: var(--fg); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+}
+.clocksel select:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; }
+
 /* Chat */
 .chat { display: flex; flex-direction: column; gap: 8px; }
 .chat h2 { margin: 0; }
@@ -358,6 +377,10 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         <button type="button" role="tab" id="modeOnline" aria-selected="false">Online</button>
       </div>
       <div class="status" id="status" aria-live="polite"></div>
+      <div class="clocks" id="clocks" hidden>
+        <div class="clk w" id="clockW"><span class="who">White</span><span class="t"></span></div>
+        <div class="clk b" id="clockB"><span class="who">Black</span><span class="t"></span></div>
+      </div>
       <div class="banner" id="banner" hidden></div>
       <div class="board-frame" id="frame">
         <div class="board" id="board"></div>
@@ -378,6 +401,15 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       </div>
       <div class="controls">
         <button class="btn" id="flipBtn" type="button">Flip board</button>
+        <label class="clocksel" title="Applies to new games">Clock
+          <select id="clockSel">
+            <option value="off">No clock</option>
+            <option value="1+1">1 min + 1 s</option>
+            <option value="3+2">3 min + 2 s</option>
+            <option value="5+3">5 min + 3 s</option>
+            <option value="10+5">10 min + 5 s</option>
+          </select>
+        </label>
         <span class="spacer"></span>
         <button class="btn" id="newBtn" type="button">New game</button>
       </div>
@@ -416,6 +448,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
             <li><b>Pawns stay legal.</b> A straight pawn push fizzles if anything is now in front of it, and a diagonal pawn capture fizzles if there is nothing left to take.</li>
             <li><b>Responses</b> are chosen from the board as it is now, before anything on the stack happens.</li>
             <li><b>One move per piece.</b> A piece that already has a move on the stack can't be given another one until the stack resolves. Those pieces are dimmed.</li>
+            <li><b>Clock (optional).</b> Pick a time control before starting a game. Your clock runs while it's your turn to move or respond, pauses while the stack resolves, and gains a few seconds after each move. Run out and you lose.</li>
             <li><b>Online.</b> Create a game and send the invite link. No sign-in needed: the two browsers connect directly, so both players keep the page open while playing. Anyone else who opens the link watches.</li>
             <li><b>No check rules.</b> You may move into check, leave your king attacked, or castle through attacked squares. You win by capturing the king, and your opponent can respond to save it. There is no checkmate.</li>
           </ul>
@@ -596,8 +629,19 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   const STEP = reduced ? 300 : 750;
   const wait = ms => new Promise(r => setTimeout(r, ms));
 
-  function freshGame() {
-    return { st: initialState(), stack: [], phase: 'move', cur: 'w', log: [], result: null, trail: [] };
+  // Time controls: base time per player and seconds added after each move.
+  const TIME_CONTROLS = { '1+1': [1, 1], '3+2': [3, 2], '5+3': [5, 3], '10+5': [10, 5] };
+  function timeControl(key) {
+    const tc = TIME_CONTROLS[key];
+    return tc ? { key, base: tc[0] * 60000, inc: tc[1] * 1000 } : null;
+  }
+
+  function freshGame(tc) {
+    return {
+      id: Math.random().toString(36).slice(2), // tells the clock a new game started
+      st: initialState(), stack: [], phase: 'move', cur: 'w', log: [], result: null, trail: [],
+      clock: tc ? { w: tc.base, b: tc.base, inc: tc.inc } : null
+    };
   }
 
   // Legal moves for the player to act, minus pieces that already have a move on the stack.
@@ -666,21 +710,38 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   // Checks an action against the rules and starts it. Returns a generator to run, or null if illegal.
   function startAction(G, a) {
     if (!a || (a.c && a.c !== G.cur)) return null;
+    // A player whose time is up loses.
+    if (a.t === 'flag') {
+      if (!G.clock || (G.phase !== 'move' && G.phase !== 'respond')) return null;
+      const loser = G.cur, winner = other(loser);
+      G.clock[loser] = 0;
+      G.result = { winner, text: `${NAME[loser]} ran out of time. ${NAME[winner]} wins` };
+      G.log.push({ player: winner, html: `<b>${NAME[loser]} ran out of time.</b> ${NAME[winner]} wins` });
+      G.phase = 'over';
+      return (function* () {})();
+    }
+    // Actions carry the actor's time left, so every copy of the game agrees on the clocks.
+    const spend = () => { if (G.clock && typeof a.left === 'number') G.clock[G.cur] = Math.max(0, a.left) + (a.t === 'move' ? G.clock.inc : 0); };
     if (a.t === 'move') {
       const m = availableMoves(G).find(x => x.from === a.from && x.to === a.to);
       if (!m) return null;
       if (m.promo && !['q', 'r', 'b', 'n'].includes(a.p)) return null;
+      spend();
       declareInto(G, m.promo ? { ...m, promoTo: a.p } : m);
       return (function* () {})();
     }
-    if (a.t === 'resolve') return G.phase === 'respond' ? resolveGen(G) : null;
+    if (a.t === 'resolve') {
+      if (G.phase !== 'respond') return null;
+      spend();
+      return resolveGen(G);
+    }
     return null;
   }
   const drain = gen => { for (const _ of gen) { /* run to the end */ } };
   const sameAct = (a, b) => !!a && !!b && a.t === b.t && a.from === b.from && a.to === b.to && a.c === b.c && (a.p || '') === (b.p || '');
 
-  function replay(actions, seats) {
-    const G = freshGame();
+  function replay(actions, seats, tc) {
+    const G = freshGame(tc);
     for (const a of actions) {
       if (seats && seats[a.c] !== a.by) continue;
       const gen = startAction(G, a);
@@ -825,8 +886,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
 
   // ---------- View state ----------
   const V = { mode: 'local', flipped: false, sel: null, selMoves: [], busy: false, preview: null };
-  let LG = freshGame();               // the same-screen game
-  let CG = freshGame();               // the game against the computer
+  const clockSel = document.getElementById('clockSel');
+  try { const saved = localStorage.getItem('stackchess:tc'); if (saved && (saved === 'off' || TIME_CONTROLS[saved])) clockSel.value = saved; } catch (_) {}
+  const chosenTC = () => timeControl(clockSel.value);
+  let LG = freshGame(chosenTC());     // the same-screen game
+  let CG = freshGame(chosenTC());     // the game against the computer
   const CPU = { color: 'b', level: 'normal', thinking: false };
   let pendingNewGame = false, legalNow = [];
 
@@ -838,7 +902,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   const STORE = 'stackchess' + (PROFILE ? '-' + PROFILE : '') + ':';
   const NET = {
     code: null, role: null, hostColor: 'w', round: 1,
-    actions: [], applied: 0, G: freshGame(),
+    actions: [], applied: 0, G: freshGame(), clock: null,
     peer: null, conn: null, connected: false, status: '', note: '',
     token: null, guestToken: null, retryTimer: null, full: false, chat: [],
     watching: false, watchers: new Set(),  // watching: this page is a spectator; watchers: spectators connected to the host
@@ -860,7 +924,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     if (!NET.code) return;
     store.set('game-' + NET.code, {
       role: NET.role, hostColor: NET.hostColor, round: NET.round, actions: NET.actions,
-      token: NET.token, guestToken: NET.guestToken, chat: NET.chat.slice(-100), names: NET.names, updatedAt: Date.now()
+      token: NET.token, guestToken: NET.guestToken, chat: NET.chat.slice(-100), names: NET.names, clock: NET.clock, updatedAt: Date.now()
     });
     const recent = (store.get('recent') || []).filter(c => c !== NET.code);
     recent.unshift(NET.code);
@@ -883,12 +947,26 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     render();
     for (const k of gen) { render(); await wait(k === 'long' ? STEP : STEP * 0.55); }
     V.busy = false;
+    V.turnStart = performance.now(); // time spent watching the stack resolve doesn't count
     render();
+  }
+  function clockLeft(G) {
+    if (!G.clock) return Infinity;
+    // online, the clock only runs while both players are connected
+    const running = !V.busy && (G.phase === 'move' || G.phase === 'respond') && (V.mode !== 'online' || NET.connected);
+    return G.clock[G.cur] - (running ? performance.now() - (V.turnStart || performance.now()) : 0);
+  }
+  // Stamp an action with the actor's time left, or turn it into a loss on time.
+  function withClock(G, a) {
+    if (!G.clock || a.t === 'flag') return a;
+    const left = clockLeft(G);
+    return left <= 0 ? { t: 'flag' } : { ...a, left: Math.round(left) };
   }
   function clearSel() { V.sel = null; V.selMoves = []; }
 
   async function act(a) {
     if (!canAct()) return;
+    a = withClock(shownGame(), a);
     if (V.mode === 'local' || V.mode === 'cpu') {
       const gen = startAction(V.mode === 'cpu' ? CG : LG, a);
       if (!gen) return;
@@ -930,13 +1008,13 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     acts = Array.isArray(acts) ? acts : [];
     if (round !== NET.round || hostColor !== NET.hostColor) {
       NET.round = round; NET.hostColor = hostColor;
-      NET.actions = acts.slice(); NET.G = replay(acts, seatsOf()); NET.applied = acts.length;
+      NET.actions = acts.slice(); NET.G = replay(acts, seatsOf(), NET.clock); NET.applied = acts.length;
       orient();
     } else {
       const n = Math.min(acts.length, NET.actions.length);
       let same = true;
       for (let i = 0; i < n; i++) if (!sameAct(acts[i], NET.actions[i])) { same = false; break; }
-      if (!same) { NET.actions = acts.slice(); NET.G = replay(acts, seatsOf()); NET.applied = acts.length; }
+      if (!same) { NET.actions = acts.slice(); NET.G = replay(acts, seatsOf(), NET.clock); NET.applied = acts.length; }
       else if (acts.length > NET.actions.length) NET.actions = acts.slice();
     }
     saveNet();
@@ -960,7 +1038,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       if (NET.guestToken && msg.token !== NET.guestToken) {
         // Both seats are taken, so this person watches.
         NET.watchers.add(conn);
-        conn.send({ type: 'welcome', watch: true, round: NET.round, hostColor: NET.hostColor, actions: NET.actions, chat: NET.chat.slice(-50), names: NET.names });
+        conn.send({ type: 'welcome', watch: true, round: NET.round, hostColor: NET.hostColor, actions: NET.actions, chat: NET.chat.slice(-50), names: NET.names, clock: NET.clock && NET.clock.key });
         renderAll();
         return;
       }
@@ -977,7 +1055,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         receiveList(NET.round, NET.hostColor, theirs);
       }
       saveNet();
-      conn.send({ type: 'welcome', round: NET.round, hostColor: NET.hostColor, actions: NET.actions, names: NET.names });
+      conn.send({ type: 'welcome', round: NET.round, hostColor: NET.hostColor, actions: NET.actions, names: NET.names, clock: NET.clock && NET.clock.key });
       renderAll();
       return;
     }
@@ -999,6 +1077,14 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         NET.conn = conn; NET.connected = true; NET.status = '';
         NET.watching = !!msg.watch;
         if (NET.watching && Array.isArray(msg.chat)) NET.chat = msg.chat.filter(m => m && typeof m.text === 'string');
+        {
+          const tc = timeControl(msg.clock);
+          if ((tc && tc.key) !== (NET.clock && NET.clock.key)) {
+            NET.clock = tc;
+            NET.G = replay(NET.actions, seatsOf(), NET.clock);
+            NET.applied = NET.actions.length;
+          }
+        }
         receiveList(msg.round, msg.hostColor, msg.actions);
         NET.names = cleanNames(msg.names);
         if (!NET.watching) NET.names[NET.role] = myName;
@@ -1175,13 +1261,16 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     NET.watching = false; NET.watchers = new Set();
     if (opts && opts.create) {
       NET.role = 'host'; NET.hostColor = opts.color; NET.round = 1; NET.actions = [];
+      NET.clock = chosenTC();
       NET.token = null; NET.guestToken = null;
     } else if (saved) {
       NET.role = saved.role; NET.hostColor = saved.hostColor; NET.round = saved.round || 1;
       NET.actions = Array.isArray(saved.actions) ? saved.actions : [];
+      NET.clock = timeControl(saved.clock && saved.clock.key);
       NET.token = saved.token || null; NET.guestToken = saved.guestToken || null;
     } else {
       NET.role = 'guest'; NET.hostColor = 'w'; NET.round = 0; NET.actions = [];
+      NET.clock = null;
       NET.token = randomToken(); NET.guestToken = null;
     }
     if (NET.role === 'guest' && !NET.token) NET.token = randomToken();
@@ -1189,7 +1278,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     NET.names = saved && !(opts && opts.create) && saved.names ? saved.names : {};
     if (NET.names.w !== undefined || NET.names.b !== undefined) NET.names = {}; // older saves keyed names by color
     if (NET.role === 'host') NET.names.host = myName;
-    NET.G = replay(NET.actions, seatsOf());
+    NET.G = replay(NET.actions, seatsOf(), NET.clock);
     NET.applied = NET.actions.length;
     if (NET.role === 'host' || saved) orient();
     saveNet();
@@ -1321,6 +1410,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     renderStatus(real);
     renderStack(real);
     renderLog(real);
+    renderClocks(real);
     alignStack();
     // keep the online panel in step with anything it shows
     const panelKey = JSON.stringify([V.mode, NET.code, NET.role, NET.connected, NET.watching, NET.watchers.size, NET.round, NET.G.phase, NET.names, NET.status, NET.guestToken]);
@@ -1623,10 +1713,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       const a = game === CG ? chooseAction(game, CPU.level) : null;
       CPU.thinking = false;
       if (game !== CG || V.mode !== 'cpu' || !a) { render(); cpuTurn(); return; }
-      const gen = startAction(CG, a);
+      const timed = withClock(CG, a);
+      const gen = startAction(CG, timed);
       if (gen) await animate(gen); else render();
-      if (a.then && game === CG && V.mode === 'cpu') {
-        const gen2 = startAction(CG, a.then);
+      if (a.then && timed.t !== 'flag' && game === CG && V.mode === 'cpu') {
+        const gen2 = startAction(CG, withClock(CG, a.then));
         if (gen2) await animate(gen2); else render();
       }
       cpuTurn();
@@ -1646,7 +1737,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     if (V.busy) return;
     CPU.color = other(b.dataset.c);
     V.flipped = b.dataset.c === 'b';
-    CG = freshGame(); clearSel(); renderCpuPanel(); render(); cpuTurn();
+    CG = freshGame(chosenTC()); clearSel(); renderCpuPanel(); render(); cpuTurn();
   }));
   document.querySelectorAll('#cpuLevel button').forEach(b => b.addEventListener('click', () => {
     CPU.level = b.dataset.l; renderCpuPanel();
@@ -1720,6 +1811,47 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     renderChat();
   });
 
+  // ---------- Chess clock ----------
+  const fmtClock = ms => {
+    ms = Math.max(0, ms);
+    if (ms < 10000) return (ms / 1000).toFixed(1);
+    const t = Math.ceil(ms / 1000);
+    return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+  };
+  function renderClocks(G) {
+    const box = $('clocks');
+    box.hidden = !G.clock;
+    if (!G.clock) return;
+    const live = (G.phase === 'move' || G.phase === 'respond') && (V.mode !== 'online' || NET.connected);
+    for (const c of ['w', 'b']) {
+      const el = $(c === 'w' ? 'clockW' : 'clockB');
+      const ms = c === G.cur && live ? clockLeft(G) : G.clock[c];
+      el.classList.toggle('active', live && c === G.cur);
+      el.classList.toggle('low', ms < 20000);
+      el.querySelector('.t').textContent = fmtClock(ms);
+    }
+  }
+  function tickClock() {
+    const G = shownGame();
+    const key = [V.mode, G.id, G.log.length, G.cur, G.phase, NET.connected].join('|');
+    if (key !== V.clockKey || V.busy) { V.clockKey = key; V.turnStart = performance.now(); }
+    renderClocks(G);
+    if (!G.clock || V.busy || (G.phase !== 'move' && G.phase !== 'respond') || clockLeft(G) > 0) return;
+    if (V.mode === 'cpu' && G.cur === CPU.color) {
+      if (!CPU.thinking) { drain(startAction(CG, { t: 'flag' })); renderAll(); }
+    } else if (myColors().includes(G.cur)) {
+      act({ t: 'flag' });
+    }
+  }
+  setInterval(tickClock, 100);
+  clockSel.addEventListener('change', () => {
+    try { localStorage.setItem('stackchess:tc', clockSel.value); } catch (_) {}
+    // A game that hasn't started yet switches right away; otherwise it applies to the next game.
+    if (!LG.log.length) LG = freshGame(chosenTC());
+    if (!CG.log.length && !CPU.thinking) { CG = freshGame(chosenTC()); cpuTurn(); }
+    render();
+  });
+
   // ---------- Controls ----------
   $('resolveBtn').addEventListener('click', () => { endPreview(); act({ t: 'resolve' }); });
   // Hold to preview: resolve a copy of the game and show it until the button is released.
@@ -1764,8 +1896,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       return;
     }
     pendingNewGame = false; btn.textContent = 'New game'; btn.classList.remove('warn');
-    if (V.mode === 'cpu') { CG = freshGame(); clearSel(); render(); cpuTurn(); }
-    else { LG = freshGame(); clearSel(); render(); }
+    if (V.mode === 'cpu') { CG = freshGame(chosenTC()); clearSel(); render(); cpuTurn(); }
+    else { LG = freshGame(chosenTC()); clearSel(); render(); }
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { $('promo').hidden = true; clearSel(); render(); }
