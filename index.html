@@ -850,7 +850,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     if (!acts.length) return null;
     let results = acts.map(a => [a, 0]);
     for (let d = 1; d <= cfg.maxDepth; d++) {
-      ctx.deadline = d === 1 ? Infinity : deadline; // never move without finishing one full look-ahead
+      ctx.deadline = d <= 2 ? Infinity : deadline; // always see at least the opponent's reply
       try {
         const round = [];
         let alpha = -Infinity;
@@ -864,7 +864,9 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
           if (v > alpha) alpha = v;
         }
         round.sort((x, y) => y[1] - x[1]);
-        results = round;
+        // Every action passes the turn, so an odd depth ends on our own move and gives us an
+        // unanswered last word. Only trust depths that end on the opponent's reply.
+        if (d % 2 === 0) results = round;
         acts = round.map(x => x[0]);
       } catch (e) {
         if (e !== ctx) throw e;
