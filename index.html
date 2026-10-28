@@ -96,6 +96,13 @@ h1 span { color: var(--amber); }
 .status-sub { color: var(--muted); font-size: 0.95rem; }
 
 /* Board */
+.boardrow { display: flex; gap: 10px; align-items: stretch; }
+.boardrow .board-frame { flex: 1; min-width: 0; }
+.evalbar { position: relative; flex: 0 0 22px; border-radius: 4px; overflow: hidden; background: var(--piece-b); box-shadow: 0 0 0 1px #000, 0 0 0 3px #2b2639; }
+.evalfill { position: absolute; left: 0; right: 0; bottom: 0; height: 50%; background: var(--piece-w); transition: height .4s ease; }
+.evalbar.flipped .evalfill { top: 0; bottom: auto; }
+.evalnum { position: absolute; left: 0; right: 0; text-align: center; font-family: var(--font-mono); font-weight: 600; font-size: .6rem; line-height: 1; }
+@media (prefers-reduced-motion: reduce) { .evalfill { transition: none; } }
 .board-frame {
   position: relative; width: 100%; aspect-ratio: 1; max-width: 100%;
   container-type: inline-size;
@@ -382,6 +389,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         <div class="clk b" id="clockB"><span class="who">Black</span><span class="t"></span></div>
       </div>
       <div class="banner" id="banner" hidden></div>
+      <div class="boardrow">
       <div class="board-frame" id="frame">
         <div class="board" id="board"></div>
         <svg class="arrows" id="arrows" viewBox="0 0 800 800" aria-hidden="true">
@@ -398,6 +406,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
             <div class="promo-row" id="promoRow"></div>
           </div>
         </div>
+      </div>
+      <div class="evalbar" id="evalbar" title="How the computer rates the position">
+        <div class="evalfill" id="evalFill"></div>
+        <span class="evalnum" id="evalNum"></span>
+      </div>
       </div>
       <div class="controls">
         <button class="btn" id="flipBtn" type="button">Flip board</button>
@@ -801,12 +814,46 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     return { st: base.st, stack: base.stack.concat([{ ...m, player: s.cur }]), cur: other(s.cur), winner: null };
   }
 
-  // Score = resolve whatever is on the stack, then count material, from the view of the player to act.
+  // Score = resolve the stack, then count material, from the view of the player to act.
+  // The player to act still has their turn, so of their pieces that die in the resolution, the
+  // most valuable one that could still move (isn't already committed on the stack) counts as saved.
   function evaluate(s) {
-    const t = s.stack.length ? sResolve(s) : s;
-    if (t.winner) return t.winner === s.cur ? WIN : -WIN;
+    if (!s.stack.length) return threatMaterial(s.st, s.cur);
+    const t = sResolve(s);
+    const used = new Set(s.stack.map(e => e.pieceId));
+    const alive = new Set(t.st.board.filter(Boolean).map(p => p.id));
+    let saved = 0, kingSaved = false;
+    s.st.board.forEach((p, sq) => {
+      if (!p || p.c !== s.cur || alive.has(p.id) || used.has(p.id) || !pieceMoves(s.st, sq).length) return;
+      if (p.t === 'k') kingSaved = true;
+      else saved = Math.max(saved, VAL[p.t]);
+    });
+    if (t.winner === s.cur) return WIN;
+    if (t.winner) return kingSaved ? threatMaterial(t.st, s.cur) : -WIN; // a king that can step away isn't lost
+    return threatMaterial(t.st, s.cur) + saved;
+  }
+  // Material for player c, where a piece attacked by two or more enemy pieces counts at half value,
+  // and a king attacked by two or more counts as half a lost game for its owner.
+  function threatMaterial(st, c) {
+    const hits = new Array(64).fill(0);
+    for (let sq = 0; sq < 64; sq++) {
+      const p = st.board[sq];
+      if (!p) continue;
+      for (const m of pieceMoves(st, sq)) { const q = st.board[m.to]; if (q && q.c !== p.c) hits[m.to]++; }
+    }
     let score = 0;
-    for (const p of t.st.board) if (p) score += p.c === s.cur ? VAL[p.t] : -VAL[p.t];
+    for (let sq = 0; sq < 64; sq++) {
+      const p = st.board[sq];
+      if (!p) continue;
+      const sign = p.c === c ? 1 : -1, doubled = hits[sq] >= 2;
+      if (p.t === 'k') { if (doubled) score -= sign * WIN / 2; }
+      else score += sign * (doubled ? VAL[p.t] / 2 : VAL[p.t]);
+    }
+    return score;
+  }
+  function material(st, c) {
+    let score = 0;
+    for (const p of st.board) if (p) score += p.c === c ? VAL[p.t] : -VAL[p.t];
     return score;
   }
 
@@ -822,7 +869,17 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     return acts.map(a => [orderScore(s, a), a]).sort((x, y) => y[0] - x[0]).map(x => x[1]);
   }
 
-  function search(s, depth, alpha, beta, ply, ctx) {
+  // Stack extensions: a response that touches the fight already on the stack doesn't use up depth,
+  // so the bot reads the stack out. That is a response that captures a piece with a move on the
+  // stack, or moves a piece that a stack move is targeting. At most MAX_STACK_EXT per line.
+  const MAX_STACK_EXT = 6;
+  function stackRelated(s, a) {
+    if (a.t !== 'move' || !s.stack.length) return false;
+    const target = s.st.board[a.m.to];
+    if (target && target.c !== s.cur && s.stack.some(e => e.pieceId === target.id)) return true;
+    return s.stack.some(e => e.player !== s.cur && e.to === a.m.from);
+  }
+  function search(s, depth, alpha, beta, ply, ctx, ext = 0) {
     if (depth === 0) return evaluate(s);
     if ((++ctx.nodes & 511) === 0 && performance.now() > ctx.deadline) throw ctx;
     const acts = ordered(s, sActions(s));
@@ -831,9 +888,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     for (const a of acts) {
       const c = sApply(s, a);
       let v;
+      const free = ext < MAX_STACK_EXT && stackRelated(s, a);
+      const nd = free ? depth : depth - 1, ne = free ? ext + 1 : ext;
       if (c.winner) v = c.winner === s.cur ? WIN - ply - 1 : -(WIN - ply - 1);
-      else if (c.cur === s.cur) v = search(c, depth - 1, alpha, beta, ply + 1, ctx);
-      else v = -search(c, depth - 1, -beta, -alpha, ply + 1, ctx);
+      else if (c.cur === s.cur) v = search(c, nd, alpha, beta, ply + 1, ctx, ne);
+      else v = -search(c, nd, -beta, -alpha, ply + 1, ctx, ne);
       if (v > best) best = v;
       if (v > alpha) alpha = v;
       if (alpha >= beta) break;
@@ -858,23 +917,26 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         for (const a of acts) {
           const c = sApply(s, a);
           let v;
+          const free = stackRelated(s, a);
+          const nd = free ? d : d - 1, ne = free ? 1 : 0;
           if (c.winner) v = c.winner === s.cur ? WIN : -WIN;
-          else if (c.cur === s.cur) v = search(c, d - 1, alpha, Infinity, 1, ctx);
-          else v = -search(c, d - 1, -Infinity, -alpha, 1, ctx);
+          else if (c.cur === s.cur) v = search(c, nd, alpha, Infinity, 1, ctx, ne);
+          else v = -search(c, nd, -Infinity, -alpha, 1, ctx, ne);
           round.push([a, v]);
           if (v > alpha) alpha = v;
         }
         round.sort((x, y) => y[1] - x[1]);
-        // Every action passes the turn, so an odd depth ends on our own move and gives us an
-        // unanswered last word. Only trust depths that end on the opponent's reply.
-        if (d % 2 === 0) results = round;
+        results = round;
         acts = round.map(x => x[0]);
       } catch (e) {
         if (e !== ctx) throw e;
         break; // out of time: keep the last finished depth
       }
     }
-    let pick = results[0][0];
+    chooseAction.lastScore = results[0][1];
+    // Among moves tied for best, pick one at random (avoids shuffling the same piece back and forth).
+    const ties = results.filter(r => r[1] === results[0][1]);
+    let pick = ties[Math.floor(Math.random() * ties.length)][0];
     if (cfg.noise) {
       let bestNoisy = -Infinity;
       for (const [a, v] of results) {
@@ -1419,6 +1481,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     renderStack(real);
     renderLog(real);
     renderClocks(real);
+    scheduleEval();
+    if (lastEval !== null) drawEval(lastEval);
     alignStack();
     // keep the online panel in step with anything it shows
     const panelKey = JSON.stringify([V.mode, NET.code, NET.role, NET.connected, NET.watching, NET.watchers.size, NET.round, NET.G.phase, NET.names, NET.status, NET.guestToken]);
@@ -1818,6 +1882,40 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     sendChat(text);
     renderChat();
   });
+
+  // ---------- Evaluation bar ----------
+  // After each change, a short search (the bot's own evaluation) rates the position for White.
+  AI_LEVELS.evalbar = { ms: 200, maxDepth: 8, noise: 0 };
+  let evalKey = '', evalTimer = null, lastEval = null;
+  function scheduleEval() {
+    const G = shownGame();
+    const key = [V.mode, G.id, G.log.length, G.phase].join('|');
+    if (key === evalKey) return;
+    evalKey = key;
+    clearTimeout(evalTimer);
+    evalTimer = setTimeout(() => {
+      if (G !== shownGame()) return;
+      if (V.busy || CPU.thinking || G.phase === 'resolving') { evalKey = ''; return; } // try again after
+      let white;
+      if (G.phase === 'over') white = G.result.winner === 'w' ? WIN : G.result.winner === 'b' ? -WIN : 0;
+      else { chooseAction(G, 'evalbar'); white = G.cur === 'w' ? chooseAction.lastScore : -chooseAction.lastScore; }
+      lastEval = white;
+      drawEval(white);
+    }, 80);
+  }
+  function drawEval(white) {
+    const king = Math.abs(white) >= WIN / 4;
+    const share = king ? (white > 0 ? 1 : 0) : 1 / (1 + Math.pow(10, -white / 400));
+    $('evalFill').style.height = (share * 100).toFixed(1) + '%';
+    $('evalbar').classList.toggle('flipped', V.flipped);
+    const num = $('evalNum');
+    num.textContent = king ? 'K' : (white > 0 ? '+' : '') + (white / 100).toFixed(1);
+    const atBottom = (white >= 0) !== V.flipped; // show the number at the leading side's end
+    num.style.top = atBottom ? '' : '4px';
+    num.style.bottom = atBottom ? '4px' : '';
+    num.style.color = white >= 0 ? 'var(--piece-w-edge)' : 'var(--piece-b-edge)';
+    $('evalbar').setAttribute('aria-label', 'Evaluation ' + num.textContent + ' for White');
+  }
 
   // ---------- Chess clock ----------
   const fmtClock = ms => {
