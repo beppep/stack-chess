@@ -804,7 +804,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   // The player to act still has their turn, so of their pieces that die in the resolution, the
   // most valuable one that could still move (isn't already committed on the stack) counts as saved.
   function evaluate(s) {
-    if (!s.stack.length) return material(s.st, s.cur);
+    if (!s.stack.length) return threatMaterial(s.st, s.cur);
     const t = sResolve(s);
     const used = new Set(s.stack.map(e => e.pieceId));
     const alive = new Set(t.st.board.filter(Boolean).map(p => p.id));
@@ -815,8 +815,27 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       else saved = Math.max(saved, VAL[p.t]);
     });
     if (t.winner === s.cur) return WIN;
-    if (t.winner) return kingSaved ? material(t.st, s.cur) : -WIN; // a king that can step away isn't lost
-    return material(t.st, s.cur) + saved;
+    if (t.winner) return kingSaved ? threatMaterial(t.st, s.cur) : -WIN; // a king that can step away isn't lost
+    return threatMaterial(t.st, s.cur) + saved;
+  }
+  // Material for player c, where a piece attacked by two or more enemy pieces counts at half value,
+  // and a king attacked by two or more counts as half a lost game for its owner.
+  function threatMaterial(st, c) {
+    const hits = new Array(64).fill(0);
+    for (let sq = 0; sq < 64; sq++) {
+      const p = st.board[sq];
+      if (!p) continue;
+      for (const m of pieceMoves(st, sq)) { const q = st.board[m.to]; if (q && q.c !== p.c) hits[m.to]++; }
+    }
+    let score = 0;
+    for (let sq = 0; sq < 64; sq++) {
+      const p = st.board[sq];
+      if (!p) continue;
+      const sign = p.c === c ? 1 : -1, doubled = hits[sq] >= 2;
+      if (p.t === 'k') { if (doubled) score -= sign * WIN / 2; }
+      else score += sign * (doubled ? VAL[p.t] / 2 : VAL[p.t]);
+    }
+    return score;
   }
   function material(st, c) {
     let score = 0;
