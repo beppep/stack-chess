@@ -411,6 +411,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
           </select>
         </label>
         <span class="spacer"></span>
+        <button class="btn" id="undoBtn" type="button">Undo</button>
         <button class="btn" id="newBtn" type="button">New game</button>
       </div>
     </section>
@@ -887,7 +888,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   }
 
   // ---------- View state ----------
-  const V = { mode: 'local', flipped: false, sel: null, selMoves: [], busy: false, preview: null };
+  const V = { mode: 'local', flipped: false, sel: null, selMoves: [], busy: false, preview: null, hist: [] };
   const clockSel = document.getElementById('clockSel');
   try { const saved = localStorage.getItem('stackchess:tc'); if (saved && (saved === 'off' || TIME_CONTROLS[saved])) clockSel.value = saved; } catch (_) {}
   const chosenTC = () => timeControl(clockSel.value);
@@ -970,8 +971,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     if (!canAct()) return;
     a = withClock(shownGame(), a);
     if (V.mode === 'local' || V.mode === 'cpu') {
-      const gen = startAction(V.mode === 'cpu' ? CG : LG, a);
+      const game = V.mode === 'cpu' ? CG : LG;
+      const snapshot = JSON.parse(JSON.stringify(game));
+      const gen = startAction(game, a);
       if (!gen) return;
+      V.hist.push({ mode: V.mode, game: snapshot });
       clearSel();
       await animate(gen);
       cpuTurn();
@@ -1405,6 +1409,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     $('modeLocal').setAttribute('aria-selected', V.mode === 'local');
     $('modeOnline').setAttribute('aria-selected', V.mode === 'online');
     $('newBtn').hidden = V.mode === 'online';
+    $('undoBtn').hidden = V.mode === 'online';
+    $('undoBtn').disabled = V.busy || CPU.thinking || !undoEntry();
     $('cpuPanel').hidden = V.mode !== 'cpu';
     $('modeCpu').setAttribute('aria-selected', V.mode === 'cpu');
     $('onlinePanel').hidden = V.mode !== 'online';
@@ -1882,6 +1888,26 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   rbtn.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse' && !rbtn.disabled) startPreview(); });
   rbtn.addEventListener('pointerleave', endPreview);
   $('flipBtn').addEventListener('click', () => { V.flipped = !V.flipped; render(); });
+  // Undo: go back to just before your last action in this game.
+  function undoEntry() {
+    const cur = V.mode === 'cpu' ? CG : V.mode === 'local' ? LG : null;
+    for (let i = V.hist.length - 1; i >= 0; i--) {
+      const h = V.hist[i];
+      if (h.mode === V.mode && cur && h.game.id === cur.id) return h;
+    }
+    return null;
+  }
+  $('undoBtn').addEventListener('click', () => {
+    if (V.busy || CPU.thinking) return;
+    const h = undoEntry();
+    if (!h) return;
+    V.hist.splice(V.hist.lastIndexOf(h), 1);
+    if (V.mode === 'cpu') CG = h.game; else LG = h.game;
+    $('promo').hidden = true;
+    clearSel();
+    renderAll();
+    if (V.mode === 'cpu') cpuTurn();
+  });
   $('modeLocal').addEventListener('click', () => setMode('local'));
   $('modeOnline').addEventListener('click', () => setMode('online'));
   $('modeCpu').addEventListener('click', () => setMode('cpu'));
