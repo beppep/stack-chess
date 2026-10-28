@@ -920,12 +920,12 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
           const free = stackRelated(s, a);
           const nd = free ? d : d - 1, ne = free ? 1 : 0;
           if (c.winner) v = c.winner === s.cur ? WIN : -WIN;
-          // A pruned move only gets "at most lo", never a real score. With lo one below the best so far,
-          // every pruned move lands strictly below the best, so it can never be picked as a tie.
-          // With noise any move can be picked, so nothing is pruned at the root.
+          // Search one below the best so far, so a move that truly ties the best gets its real score.
+          // A pruned move only gets "at most lo", so it is marked -Infinity and never picked.
           else {
-            const lo = cfg.noise ? -Infinity : alpha - 1;
+            const lo = alpha - 1;
             v = c.cur === s.cur ? search(c, nd, lo, Infinity, 1, ctx, ne) : -search(c, nd, -Infinity, -lo, 1, ctx, ne);
+            if (v <= lo) v = -Infinity;
           }
           round.push([a, v]);
           if (v > alpha) alpha = v;
