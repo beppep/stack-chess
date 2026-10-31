@@ -1942,19 +1942,13 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     try { history.replaceState(null, '', REP.link.slice(REP.link.indexOf('#'))); } catch (_) {}
     renderAll();
   }
-  async function replayStep(to) {
+  function replayStep(to) {
     if (V.busy || V.mode !== 'replay') return;
     to = Math.max(0, Math.min(REP.acts.length, to));
     if (to === REP.pos) return;
-    if (to === REP.pos + 1) {
-      const gen = startAction(REP.G, REP.acts[REP.pos]);
-      REP.pos = to;
-      if (gen) await animate(gen); else render(); // forward one: show the stack resolving
-    } else {
-      REP.pos = to;
-      REP.G = replay(REP.acts.slice(0, to), null, REP.tc);
-      render();
-    }
+    REP.pos = to;
+    REP.G = replay(REP.acts.slice(0, to), null, REP.tc);
+    render();
   }
   function renderReplay() {
     const box = $('replayBody');
@@ -1970,10 +1964,10 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     frag.appendChild(ul);
     frag.appendChild(el('p', 'note', `Action ${REP.pos} of ${REP.acts.length}`));
     const row = el('div', 'btnrow');
-    for (const [label, aria, to] of [['⏮', 'To the start', 0], ['◀', 'Back one action', REP.pos - 1], ['▶', 'Forward one action', REP.pos + 1], ['⏭', 'To the end', REP.acts.length]]) {
+    for (const [label, aria, to] of [['⏪', 'Back ten actions', REP.pos - 10], ['◀', 'Back one action', REP.pos - 1], ['▶', 'Forward one action', REP.pos + 1], ['⏩', 'Forward ten actions', REP.pos + 10]]) {
       const b = button(label, '', () => replayStep(to));
       b.setAttribute('aria-label', aria);
-      b.disabled = V.busy || to === REP.pos || to < 0 || to > REP.acts.length;
+      b.disabled = V.busy || (to < REP.pos ? REP.pos === 0 : REP.pos === REP.acts.length);
       row.appendChild(b);
     }
     frag.appendChild(row);
