@@ -424,6 +424,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
           </select>
         </label>
         <span class="spacer"></span>
+        <button class="btn" id="replayBtn" type="button">Copy replay link</button>
         <button class="btn" id="undoBtn" type="button">Undo</button>
         <button class="btn" id="newBtn" type="button">New game</button>
       </div>
@@ -446,6 +447,10 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         <p class="hint">Picking a side starts a new game. The computer looks a few moves and responses ahead and counts material.</p>
       </div>
 
+      <div class="panel" id="replayPanel" hidden>
+        <div class="online" id="replayBody"></div>
+      </div>
+
       <div class="panel" id="onlinePanel" hidden>
         <div id="onlineBody"></div>
       </div>
@@ -463,7 +468,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
             <li><b>Responses</b> are chosen from the board as it is now, before anything on the stack happens.</li>
             <li><b>One move per piece.</b> A piece that already has a move on the stack can't be given another one until the stack resolves. Those pieces are dimmed.</li>
             <li><b>Clock (optional).</b> Pick a time control before starting a game. Your clock runs while it's your turn to move or respond, pauses while the stack resolves, and gains a few seconds after each move. Run out and you lose.</li>
-            <li><b>Online.</b> Create a game and send the invite link. No sign-in needed: the two browsers connect directly, so both players keep the page open while playing. Anyone else who opens the link watches.</li>
+            <li><b>Online.</b> Create a game and send the invite link. No sign-in needed: the two browsers connect directly, so both players keep the page open while playing. Anyone else who opens the link watches. Or press <i>Search for game</i> to be paired with someone else who is searching.</li>
+            <li><b>Replays.</b> <i>Copy replay link</i> puts the whole game in a link. Anyone who opens it can step through the game with the arrow keys. Games you played or watched online can also be replayed from <i>Your recent games</i>.</li>
             <li><b>No check rules.</b> You may move into check, leave your king attacked, or castle through attacked squares. You win by capturing the king, and your opponent can respond to save it. There is no checkmate.</li>
           </ul>
         </details>
@@ -653,8 +659,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   function freshGame(tc) {
     return {
       id: Math.random().toString(36).slice(2), // tells the clock a new game started
-      st: initialState(), stack: [], phase: 'move', cur: 'w', log: [], result: null, trail: [],
-      clock: tc ? { w: tc.base, b: tc.base, inc: tc.inc } : null
+      st: initialState(), stack: [], phase: 'move', cur: 'w', log: [], result: null, trail: [], acts: [],
+      clock: tc ? { w: tc.base, b: tc.base, inc: tc.inc, key: tc.key } : null
     };
   }
 
@@ -732,10 +738,17 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       G.result = { winner, text: `${NAME[loser]} ran out of time. ${NAME[winner]} wins` };
       G.log.push({ player: winner, html: `<b>${NAME[loser]} ran out of time.</b> ${NAME[winner]} wins` });
       G.phase = 'over';
+      G.acts.push({ t: 'flag' });
       return (function* () {})();
     }
     // Actions carry the actor's time left, so every copy of the game agrees on the clocks.
-    const spend = () => { if (G.clock && typeof a.left === 'number') G.clock[G.cur] = Math.max(0, a.left) + (a.t === 'move' ? G.clock.inc : 0); };
+    const spend = () => {
+      if (G.clock && typeof a.left === 'number') G.clock[G.cur] = Math.max(0, a.left) + (a.t === 'move' ? G.clock.inc : 0);
+      const rec = { t: a.t };
+      if (a.t === 'move') { rec.from = a.from; rec.to = a.to; if (a.p) rec.p = a.p; }
+      if (typeof a.left === 'number') rec.left = a.left;
+      G.acts.push(rec);
+    };
     if (a.t === 'move') {
       const m = availableMoves(G).find(x => x.from === a.from && x.to === a.to);
       if (!m) return null;
@@ -976,7 +989,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     peer: null, conn: null, connected: false, status: '', note: '',
     token: null, guestToken: null, retryTimer: null, full: false, chat: [],
     watching: false, watchers: new Set(),  // watching: this page is a spectator; watchers: spectators connected to the host
-    names: {}                              // display names by person: { host, guest }
+    names: {},                             // display names by person: { host, guest }
+    past: []                               // earlier games in this room: [{ hostColor, actions }]
   };
 
   const store = {
@@ -994,15 +1008,17 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     if (!NET.code) return;
     store.set('game-' + NET.code, {
       role: NET.role, hostColor: NET.hostColor, round: NET.round, actions: NET.actions,
-      token: NET.token, guestToken: NET.guestToken, chat: NET.chat.slice(-100), names: NET.names, clock: NET.clock, updatedAt: Date.now()
+      token: NET.token, guestToken: NET.guestToken, chat: NET.chat.slice(-100), names: NET.names, clock: NET.clock,
+      past: NET.past, updatedAt: Date.now()
     });
     const recent = (store.get('recent') || []).filter(c => c !== NET.code);
     recent.unshift(NET.code);
-    store.set('recent', recent.slice(0, 6));
+    store.set('recent', recent.slice(0, 12));
   }
 
-  const shownGame = () => V.mode === 'cpu' ? CG : (V.mode === 'local' ? LG : (NET.code ? NET.G : freshGame()));
+  const shownGame = () => V.mode === 'replay' ? REP.G : V.mode === 'cpu' ? CG : (V.mode === 'local' ? LG : (NET.code ? NET.G : freshGame()));
   function myColors() {
+    if (V.mode === 'replay') return [];
     if (V.mode === 'local') return ['w', 'b'];
     if (V.mode === 'cpu') return [other(CPU.color)];
     return NET.code && NET.connected && !NET.watching ? [myColor()] : [];
@@ -1023,7 +1039,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   function clockLeft(G) {
     if (!G.clock) return Infinity;
     // online, the clock only runs while both players are connected
-    const running = !V.busy && (G.phase === 'move' || G.phase === 'respond') && (V.mode !== 'online' || NET.connected);
+    const running = !V.busy && (G.phase === 'move' || G.phase === 'respond') && V.mode !== 'replay' && (V.mode !== 'online' || NET.connected);
     return G.clock[G.cur] - (running ? performance.now() - (V.turnStart || performance.now()) : 0);
   }
   // Stamp an action with the actor's time left, or turn it into a loss on time.
@@ -1080,6 +1096,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   function receiveList(round, hostColor, acts) {
     acts = Array.isArray(acts) ? acts : [];
     if (round !== NET.round || hostColor !== NET.hostColor) {
+      if (NET.actions.length) NET.past = NET.past.concat([{ hostColor: NET.hostColor, actions: NET.actions }]).slice(-20);
       NET.round = round; NET.hostColor = hostColor;
       NET.actions = acts.slice(); NET.G = replay(acts, seatsOf(), NET.clock); NET.applied = acts.length;
       orient();
@@ -1326,7 +1343,75 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
 
   function orient() { V.flipped = !NET.watching && myColor() === 'b'; }
 
+  // ---------- Matchmaking: "Search for game" ----------
+  // Whoever searches first holds a well-known lobby id on the connection service, one per clock setting.
+  // The next searcher finds that id taken, connects to it, and both are sent into a fresh game.
+  const MM = { peer: null, searching: false, timer: null, status: '' };
+  const lobbyId = () => PEER_PREFIX + 'lobby-' + clockSel.value.replace('+', '-');
+  function stopSearch() {
+    MM.searching = false;
+    clearTimeout(MM.timer);
+    if (MM.peer) { try { MM.peer.destroy(); } catch (_) {} }
+    MM.peer = null;
+  }
+  function retrySearch(ms) {
+    if (!MM.searching) return;
+    clearTimeout(MM.timer);
+    MM.timer = setTimeout(() => { if (MM.searching) searchGame(); }, ms || 500 + Math.random() * 1000);
+  }
+  function searchGame() {
+    stopSearch();
+    if (typeof Peer === 'undefined') { NET.note = 'The connection library did not load. Check your internet connection and reload the page.'; renderOnline(); return; }
+    MM.searching = true;
+    MM.status = 'Searching for an opponent…';
+    const peer = new Peer(lobbyId(), { debug: 0 });
+    MM.peer = peer;
+    peer.on('open', () => { if (peer === MM.peer) { MM.status = 'Waiting for an opponent. Keep this page open.'; renderOnline(); } });
+    peer.on('connection', conn => {
+      conn.on('data', msg => {
+        if (!msg || msg.type !== 'match') return;
+        if (peer !== MM.peer) { try { conn.send({ type: 'busy' }); } catch (_) {} return; }
+        // Someone found us: start the game, and tell them the code once our game is reachable.
+        MM.peer = null; MM.searching = false; clearTimeout(MM.timer);
+        const code = randomCode();
+        openGame(code, { create: true, color: Math.random() < 0.5 ? 'w' : 'b' });
+        const t0 = Date.now();
+        (function tell() {
+          if ((NET.peer && NET.peer.open) || Date.now() - t0 > 6000) {
+            try { conn.send({ type: 'matched', code }); } catch (_) {}
+            setTimeout(() => { try { peer.destroy(); } catch (_) {} }, 1500);
+          } else setTimeout(tell, 100);
+        })();
+      });
+    });
+    peer.on('error', err => {
+      if (peer !== MM.peer) return;
+      if (err && err.type === 'unavailable-id') joinLobby(); // someone is already waiting
+      else { MM.status = 'Connection problem. Retrying…'; renderOnline(); retrySearch(3000); }
+    });
+    renderOnline();
+  }
+  function joinLobby() {
+    if (MM.peer) { try { MM.peer.destroy(); } catch (_) {} }
+    const peer = new Peer({ debug: 0 });
+    MM.peer = peer;
+    peer.on('open', () => {
+      if (peer !== MM.peer) return;
+      const conn = peer.connect(lobbyId(), { reliable: true });
+      conn.on('open', () => conn.send({ type: 'match' }));
+      conn.on('data', msg => {
+        if (peer !== MM.peer || !msg) return;
+        if (msg.type === 'matched' && /^[A-Z0-9]{6}$/.test(msg.code)) { stopSearch(); openGame(msg.code); }
+        else if (msg.type === 'busy') retrySearch();
+      });
+      clearTimeout(MM.timer);
+      MM.timer = setTimeout(() => retrySearch(10), 9000); // no answer: start over
+    });
+    peer.on('error', () => { if (peer === MM.peer) retrySearch(); }); // e.g. the waiting player just left
+  }
+
   function openGame(code, opts) {
+    stopSearch();
     stopNet();
     const saved = store.get('game-' + code);
     NET.code = code;
@@ -1349,6 +1434,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     if (NET.role === 'guest' && !NET.token) NET.token = randomToken();
     NET.chat = saved && !(opts && opts.create) && Array.isArray(saved.chat) ? saved.chat : [];
     NET.names = saved && !(opts && opts.create) && saved.names ? saved.names : {};
+    NET.past = saved && !(opts && opts.create) && Array.isArray(saved.past) ? saved.past : [];
     if (NET.names.w !== undefined || NET.names.b !== undefined) NET.names = {}; // older saves keyed names by color
     if (NET.role === 'host') NET.names.host = myName;
     NET.G = replay(NET.actions, seatsOf(), NET.clock);
@@ -1378,6 +1464,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
 
   function setMode(mode) {
     if (V.busy || V.mode === mode) return;
+    if (V.mode === 'replay') { try { history.replaceState(null, '', location.pathname + location.search + (NET.code ? '#' + NET.code : '')); } catch (_) {} }
     V.mode = mode;
     clearSel();
     if (mode === 'cpu') V.flipped = CPU.color === 'w';
@@ -1475,8 +1562,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     }
     $('modeLocal').setAttribute('aria-selected', V.mode === 'local');
     $('modeOnline').setAttribute('aria-selected', V.mode === 'online');
-    $('newBtn').hidden = V.mode === 'online';
-    $('undoBtn').hidden = V.mode === 'online';
+    $('newBtn').hidden = V.mode === 'online' || V.mode === 'replay';
+    $('undoBtn').hidden = V.mode === 'online' || V.mode === 'replay';
+    $('replayBtn').hidden = V.mode === 'replay' || !real.acts.length;
+    $('replayPanel').hidden = V.mode !== 'replay';
+    if (V.mode === 'replay') renderReplay();
     $('undoBtn').disabled = V.busy || CPU.thinking || !undoEntry();
     $('cpuPanel').hidden = V.mode !== 'cpu';
     $('modeCpu').setAttribute('aria-selected', V.mode === 'cpu');
@@ -1560,12 +1650,17 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
 
     if (G.phase === 'over' && (!online || NET.code)) {
       const w = G.result.winner;
-      s.innerHTML = (w ? chip(w) : '') + text(G.result.text, online ? 'Start a rematch from the Online panel.' : 'Start a new game to play again.');
+      s.innerHTML = (w ? chip(w) : '') + text(G.result.text, V.mode === 'replay' ? `Replay: action ${REP.pos} of ${REP.acts.length}.` : online ? 'Start a rematch from the Online panel.' : 'Start a new game to play again.');
       banner.hidden = false;
       banner.innerHTML = `<div class="big">${w ? NAME[w] + ' wins' : 'Draw'}</div><div class="status-sub">${G.result.text}.</div>`;
       return;
     }
     banner.hidden = true;
+    if (V.mode === 'replay' && G.phase !== 'resolving') {
+      s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`,
+        `Replay: action ${REP.pos} of ${REP.acts.length}. Step through it with the arrow keys or the Replay panel.`);
+      return;
+    }
     if (online && !NET.code) { s.innerHTML = chip('w') + text('Online play', 'Create a game or join one from the Online panel.'); return; }
     if (online && !NET.connected) {
       const waiting = NET.role === 'host' && !NET.guestToken;
@@ -1699,6 +1794,12 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         }));
       }
       frag.appendChild(row);
+      frag.appendChild(el('p', 'label', 'Random opponent'));
+      const mmRow = el('div', 'btnrow');
+      if (MM.searching) mmRow.appendChild(button('Cancel search', '', () => { stopSearch(); renderOnline(); }));
+      else mmRow.appendChild(button('Search for game', 'primary', searchGame));
+      frag.appendChild(mmRow);
+      note(MM.searching ? MM.status : `Matches you with someone else who is searching with the same clock (${clockSel.options[clockSel.selectedIndex].text}).`);
       const form = el('form', 'joinrow');
       form.innerHTML = '<label for="codeInput" class="label">Join with a code</label><div class="btnrow"><input id="codeInput" autocomplete="off" spellcheck="false" maxlength="6" placeholder="K7QF2M"><button class="btn small" type="submit">Join</button></div>';
       form.addEventListener('submit', e => {
@@ -1720,6 +1821,15 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
           top.append(el('span', 'code', code), el('span', 'players', 'You play ' + NAME[g.role === 'host' ? g.hostColor : other(g.hostColor)]));
           const G = replay(g.actions || [], { [g.hostColor]: 'host', [other(g.hostColor)]: 'guest' });
           info.append(top, el('div', 'gstatus', G.phase === 'over' ? G.result.text : `${(g.actions || []).length} actions so far`));
+          const games = (Array.isArray(g.past) ? g.past : []).concat((g.actions || []).length ? [{ hostColor: g.hostColor, actions: g.actions }] : []);
+          const reps = el('div', 'btnrow');
+          games.forEach((r, i) => reps.appendChild(button(games.length > 1 ? 'Game ' + (i + 1) : 'Replay', '', () => {
+            const seats = { [r.hostColor]: 'host', [other(r.hostColor)]: 'guest' };
+            const tc = timeControl(g.clock && g.clock.key);
+            const names = g.names || {};
+            openReplay({ acts: replay(r.actions, seats, tc).acts, tc, names: { w: names[seats.w] || '', b: names[seats.b] || '' } });
+          })));
+          if (games.length) info.appendChild(reps);
           li.append(info, button('Open', '', () => openGame(code)));
           ul.appendChild(li);
         }
@@ -1778,6 +1888,116 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     }
     box.replaceChildren(frag);
   }
+
+  // ---------- Replays ----------
+  // A replay link holds the whole game: clock, names and every action with the time left, e.g.
+  // #replay?tc=3%2B2&w=Bror&b=Anna&m=e2e4:178.3,R:176.1,d7d5:180.0
+  const REP = { acts: [], tc: null, names: {}, pos: 0, G: freshGame(), back: 'local', link: '' };
+  const sqIndex = n => FILES.indexOf(n[0]) + (8 - +n[1]) * 8;
+  function replayLink(G, names) {
+    const q = new URLSearchParams();
+    if (G.clock && G.clock.key) q.set('tc', G.clock.key);
+    if (names.w) q.set('w', names.w);
+    if (names.b) q.set('b', names.b);
+    const m = G.acts.map(a => (a.t === 'move' ? sqName(a.from) + sqName(a.to) + (a.p || '') : a.t === 'resolve' ? 'R' : 'F') +
+      (typeof a.left === 'number' ? ':' + (a.left / 1000).toFixed(1) : ''));
+    const qs = q.toString();
+    return location.origin + location.pathname + '#replay?' + qs + (qs ? '&' : '') + 'm=' + m.join(',');
+  }
+  function parseReplay(hash) {
+    const q = new URLSearchParams(hash.slice(hash.indexOf('?') + 1));
+    const acts = [];
+    for (const tok of (q.get('m') || '').split(',')) {
+      const [mv, t] = tok.split(':');
+      let a = null;
+      if (mv === 'R') a = { t: 'resolve' };
+      else if (mv === 'F') a = { t: 'flag' };
+      else if (/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(mv)) {
+        a = { t: 'move', from: sqIndex(mv.slice(0, 2)), to: sqIndex(mv.slice(2, 4)) };
+        if (mv[4]) a.p = mv[4];
+      }
+      if (!a) continue;
+      if (t !== undefined && t !== '' && !isNaN(+t)) a.left = Math.round(+t * 1000);
+      acts.push(a);
+    }
+    return { acts, tc: timeControl(q.get('tc')), names: { w: cleanName(q.get('w')), b: cleanName(q.get('b')) } };
+  }
+  // Names to put in a replay link of the game on screen.
+  function shownNames() {
+    if (V.mode === 'online') return { w: nameOfColor('w'), b: nameOfColor('b') };
+    if (V.mode === 'cpu') {
+      const lvl = CPU.level[0].toUpperCase() + CPU.level.slice(1);
+      return { [CPU.color]: 'Computer (' + lvl + ')', [other(CPU.color)]: myName };
+    }
+    return {};
+  }
+  function openReplay(r) {
+    if (V.busy) return;
+    if (V.mode !== 'replay') REP.back = V.mode;
+    REP.acts = r.acts; REP.tc = r.tc; REP.names = r.names || {}; REP.pos = 0; REP.G = freshGame(r.tc);
+    REP.link = replayLink(replay(r.acts, null, r.tc), REP.names);
+    V.mode = 'replay'; V.flipped = false; V.preview = null;
+    $('promo').hidden = true;
+    clearSel();
+    try { history.replaceState(null, '', REP.link.slice(REP.link.indexOf('#'))); } catch (_) {}
+    renderAll();
+  }
+  async function replayStep(to) {
+    if (V.busy || V.mode !== 'replay') return;
+    to = Math.max(0, Math.min(REP.acts.length, to));
+    if (to === REP.pos) return;
+    if (to === REP.pos + 1) {
+      const gen = startAction(REP.G, REP.acts[REP.pos]);
+      REP.pos = to;
+      if (gen) await animate(gen); else render(); // forward one: show the stack resolving
+    } else {
+      REP.pos = to;
+      REP.G = replay(REP.acts.slice(0, to), null, REP.tc);
+      render();
+    }
+  }
+  function renderReplay() {
+    const box = $('replayBody');
+    const frag = document.createDocumentFragment();
+    frag.appendChild(el('h2', '', 'Replay'));
+    const ul = el('ul', 'seats');
+    for (const c of ['w', 'b']) {
+      const li = el('li');
+      li.innerHTML = `<span class="chip ${c} small">${GLYPH.k}\uFE0E</span>`;
+      li.appendChild(el('span', 'seatname', `${REP.names[c] || NAME[c]}${REP.names[c] ? ' (' + NAME[c] + ')' : ''}`));
+      ul.appendChild(li);
+    }
+    frag.appendChild(ul);
+    frag.appendChild(el('p', 'note', `Action ${REP.pos} of ${REP.acts.length}`));
+    const row = el('div', 'btnrow');
+    for (const [label, aria, to] of [['⏮', 'To the start', 0], ['◀', 'Back one action', REP.pos - 1], ['▶', 'Forward one action', REP.pos + 1], ['⏭', 'To the end', REP.acts.length]]) {
+      const b = button(label, '', () => replayStep(to));
+      b.setAttribute('aria-label', aria);
+      b.disabled = V.busy || to === REP.pos || to < 0 || to > REP.acts.length;
+      row.appendChild(b);
+    }
+    frag.appendChild(row);
+    const row2 = el('div', 'btnrow');
+    const cp = button('Copy link', '', () => copyText(REP.link, cp));
+    row2.append(cp, button('Close replay', '', () => setMode(REP.back === 'replay' ? 'local' : REP.back)));
+    frag.appendChild(row2);
+    box.replaceChildren(frag);
+  }
+  function copyText(text, btn) {
+    const label = btn.textContent;
+    const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = label; }, 1500); };
+    try { navigator.clipboard.writeText(text).then(done, () => window.prompt('Copy this link:', text)); }
+    catch (_) { window.prompt('Copy this link:', text); }
+  }
+  $('replayBtn').addEventListener('click', () => copyText(replayLink(shownGame(), shownNames()), $('replayBtn')));
+  document.addEventListener('keydown', e => {
+    if (V.mode !== 'replay' || /INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || '')) return;
+    const to = { ArrowLeft: REP.pos - 1, ArrowRight: REP.pos + 1, Home: 0, End: REP.acts.length }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    replayStep(to);
+  });
+  window.addEventListener('hashchange', () => { if (location.hash.startsWith('#replay')) openReplay(parseReplay(location.hash)); });
 
   // ---------- Computer opponent (play) ----------
   function cpuTurn() {
@@ -1933,7 +2153,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     const box = $('clocks');
     box.hidden = !G.clock;
     if (!G.clock) return;
-    const live = (G.phase === 'move' || G.phase === 'respond') && (V.mode !== 'online' || NET.connected);
+    const live = (G.phase === 'move' || G.phase === 'respond') && V.mode !== 'replay' && (V.mode !== 'online' || NET.connected);
     for (const c of ['w', 'b']) {
       const el = $(c === 'w' ? 'clockW' : 'clockB');
       const ms = c === G.cur && live ? clockLeft(G) : G.clock[c];
@@ -1960,7 +2180,9 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     // A game that hasn't started yet switches right away; otherwise it applies to the next game.
     if (!LG.log.length) LG = freshGame(chosenTC());
     if (!CG.log.length && !CPU.thinking) { CG = freshGame(chosenTC()); cpuTurn(); }
+    if (MM.searching) searchGame(); // search among players with the new clock
     render();
+    renderOnline();
   });
 
   // ---------- Controls ----------
@@ -2037,7 +2259,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
 
   // ---------- Boot ----------
   const h = (location.hash || '').slice(1).toUpperCase();
-  if (/^[A-Z0-9]{6}$/.test(h)) { V.mode = 'online'; openGame(h); }
+  if (location.hash.startsWith('#replay')) openReplay(parseReplay(location.hash));
+  else if (/^[A-Z0-9]{6}$/.test(h)) { V.mode = 'online'; openGame(h); }
   renderAll();
 })();
 </script>
