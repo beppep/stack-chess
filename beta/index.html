@@ -699,7 +699,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   const PROFILE = new URLSearchParams(location.search).get('profile') || '';
   const STORE = 'stackchess2' + (PROFILE ? '-' + PROFILE : '') + ':'; // separate from the old version's saved games
   const SERVER = new URLSearchParams(location.search).get('server') ||
-    (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'ws://127.0.0.1:8787' : 'wss://stack-chess.SUBDOMAIN.workers.dev');
+    (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'ws://127.0.0.1:8787' : 'wss://stack-chess.bror-beppe-persson.workers.dev');
   const NET = {
     code: null, role: null, hostColor: 'w', round: 1,
     actions: [], applied: 0, G: freshGame(), clock: null,
