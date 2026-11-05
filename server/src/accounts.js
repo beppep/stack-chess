@@ -30,7 +30,11 @@ export class Accounts extends DurableObject {
       return me ? json({ name: me.name, rating: me.rating }) : json({}, 401);
     }
     if (req.method === 'GET' && path === '/api/leaderboard') return this.leaderboard();
-    if (req.method === 'GET' && path.startsWith('/api/profile/')) return this.profile(decodeURIComponent(path.slice(13)).toLowerCase());
+    if (req.method === 'GET' && path.startsWith('/api/profile/')) {
+      let who;
+      try { who = decodeURIComponent(path.slice(13)).toLowerCase(); } catch (_) { return json({}, 404); }
+      return this.profile(who);
+    }
     return json({}, 404);
   }
 
@@ -54,18 +58,16 @@ export class Accounts extends DurableObject {
     const bad = () => json({ error: 'Wrong name or password.' }, 401);
     if (typeof name !== 'string' || !NAME.test(name) || typeof password !== 'string' || password.length > 200) return bad();
     const key = name.toLowerCase(), st = this.ctx.storage;
-    const locked = await st.get('fail:' + key);
-    if (locked && locked.until > Date.now()) return json({ error: 'Too many wrong passwords. Try again in 15 minutes.' }, 429);
     const user = await st.get('user:' + key);
-    if (!user || !(await checkPassword(password, user.salt, user.hash))) {
-      // re-read after the slow hash: parallel guesses must all count
-      let fail = (await st.get('fail:' + key)) || { n: 0, until: 0 };
-      if (fail.until && fail.until <= Date.now()) fail = { n: 0, until: 0 };
-      fail.n++;
-      if (fail.n >= TRIES) fail.until = Date.now() + LOCK;
-      await st.put('fail:' + key, fail);
-      return bad();
-    }
+    if (!user) return bad(); // unknown names get no fail record
+    // Count the attempt before the slow hash so parallel guesses all count; a success clears it.
+    let fail = (await st.get('fail:' + key)) || { n: 0, until: 0 };
+    if (fail.until && fail.until <= Date.now()) fail = { n: 0, until: 0 };
+    if (fail.until > Date.now()) return json({ error: 'Too many wrong passwords. Try again in 15 minutes.' }, 429);
+    fail.n++;
+    if (fail.n >= TRIES) fail.until = Date.now() + LOCK;
+    await st.put('fail:' + key, fail);
+    if (!(await checkPassword(password, user.salt, user.hash))) return bad();
     await st.delete('fail:' + key);
     return this.startSession(key, user.name, user.rating);
   }

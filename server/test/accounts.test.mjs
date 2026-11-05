@@ -69,3 +69,28 @@ test('accounts: signup, login, sessions, results, leaderboard, profile, CORS', a
     assert.equal(await (await fetch(srv.http + '/')).text(), 'Stack Chess server\n');
   } finally { await srv.stop(); }
 });
+
+test('accounts: parallel wrong guesses count toward the lockout', async () => {
+  const srv = await startServer({ port: 0 });
+  const post = (path, body) => fetch(srv.http + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await post('/api/signup', { name: 'Para', password: 'secret1' })).status, 200);
+    await Promise.all(Array.from({ length: 10 }, (_, i) => post('/api/login', { name: 'Para', password: 'wrong' + i })));
+    assert.equal((await post('/api/login', { name: 'Para', password: 'secret1' })).status, 429);
+    // unknown names never get a fail record
+    await post('/api/login', { name: 'Nobody', password: 'x' });
+    const acc = srv.env.ACCOUNTS.get(srv.env.ACCOUNTS.idFromName('main'));
+    assert.equal(await acc.ctx.storage.get('fail:nobody'), undefined);
+  } finally { await srv.stop(); }
+});
+
+test('malformed percent escapes give 404 with CORS', async () => {
+  const srv = await startServer({ port: 0 });
+  try {
+    const r = await fetch(srv.http + '/api/profile/%E0%A4%A');
+    assert.equal(r.status, 404);
+    assert.equal(r.headers.get('access-control-allow-origin'), '*');
+    const w = await fetch(srv.http + '/room/%E0%A4%A');
+    assert.ok(w.status < 500);
+  } finally { await srv.stop(); }
+});

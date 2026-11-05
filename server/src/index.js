@@ -16,8 +16,9 @@ const STEP = 750;                     // the page's resolve animation step, whic
 export default {
   async fetch(req, env) {
     const [, kind, raw] = new URL(req.url).pathname.split('/');
-    const name = decodeURIComponent(raw || '');
     if (kind === 'api') return env.ACCOUNTS.get(env.ACCOUNTS.idFromName('main')).fetch(req);
+    let name;
+    try { name = decodeURIComponent(raw || ''); } catch (_) { return new Response('Not found', { status: 404 }); }
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('Stack Chess server\n');
     if (kind === 'room' && CODE.test(name)) return env.ROOM.get(env.ROOM.idFromName(name)).fetch(req);
     if (kind === 'lobby' && name === 'play') return env.LOBBY.get(env.LOBBY.idFromName(name)).fetch(req);
@@ -230,10 +231,13 @@ export class Room extends DurableObject {
     role = role || 'watch';
     if (role !== 'watch') {
       s.accounts = s.accounts || { host: null, guest: null };
-      if (!s.accounts[role] && typeof m.session === 'string' && m.session) {
+      // An unbound seat takes an account only before the round's first action, and never one the other seat holds.
+      if (!s.accounts[role] && s.actions.length === 0 && typeof m.session === 'string' && m.session) {
         try {
           const who = await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).whoami(m.session.slice(0, 64));
-          if (who) s.accounts[role] = { key: who.key, name: who.name }; // once bound, a seat keeps its account
+          const other = s.accounts[role === 'host' ? 'guest' : 'host'];
+          // re-check after the await: the round may have started meanwhile
+          if (who && !s.accounts[role] && s.actions.length === 0 && !(other && other.key === who.key)) s.accounts[role] = { key: who.key, name: who.name };
         } catch (_) {}
       }
       s.names[role] = s.accounts[role] ? s.accounts[role].name : cleanName(m.name);

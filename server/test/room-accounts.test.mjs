@@ -144,3 +144,33 @@ test('a failing report does not break the game and is retried on sync', async t 
   assert.equal(calls, 2);
   a.c.close(); b.c.close();
 });
+
+test('a guest cannot log in mid-round to make the round rated', async t => {
+  const { srv, tok, me, room, join } = await setup();
+  t.after(() => srv.stop());
+  await room('LATE01').init({ code: 'LATE01', clock: '10+5', hostColor: 'b', host: 't1', guest: 't2', rated: true });
+  const b = await join('LATE01', 't1', { session: tok.Ben });
+  const g = await join('LATE01', 't2', { name: 'Anon' }); // guest is White
+  g.c.send({ type: 'act', round: 1, n: 0, a: { t: 'move', from: 52, to: 36 } });
+  await b.c.next('act');
+  g.c.close();
+  const g2 = await join('LATE01', 't2', { session: tok.Ann }); // logs in after the first move
+  assert.equal(g2.st.accounts.guest, null);
+  b.c.send({ type: 'act', round: 1, n: 1, a: { t: 'flag' } }); // Ben (Black) runs out of time
+  await g2.c.next('act');
+  await settle();
+  assert.equal((await me('Ben')).rating, 1200);
+  assert.equal((await me('Ann')).rating, 1200);
+  b.c.close(); g2.c.close();
+});
+
+test('one account cannot hold both seats', async t => {
+  const { srv, tok, room, join } = await setup();
+  t.after(() => srv.stop());
+  await room('TWICE1').init({ code: 'TWICE1', clock: '10+5', hostColor: 'w', host: 't1', guest: 't2', rated: true });
+  const a = await join('TWICE1', 't1', { session: tok.Ann });
+  const g = await join('TWICE1', 't2', { session: tok.Ann, name: 'Dup' }); // same account, other seat
+  assert.equal(g.st.accounts.host, 'Ann');
+  assert.equal(g.st.accounts.guest, null);
+  a.c.close(); g.c.close();
+});
