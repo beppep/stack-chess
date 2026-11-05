@@ -498,9 +498,9 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   const VAL = { p: 100, n: 310, b: 320, r: 500, q: 900, k: 0 };
   const WIN = 100000;
   const AI_LEVELS = {
-    easy: { ms: 250, maxDepth: 2, noise: 90 },
-    normal: { ms: 900, maxDepth: 6, noise: 15 },
-    hard: { ms: 2500, maxDepth: 10, noise: 0 }
+    easy: { nodes: Infinity, maxDepth: 2, noise: 90 },
+    normal: { nodes: 2000, maxDepth: 6, noise: 15 },
+    hard: { nodes: 5000, maxDepth: 10, noise: 0 }
   };
 
   function sFrom(G) {
@@ -609,7 +609,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   }
   function search(s, depth, alpha, beta, ply, ctx, ext = 0) {
     if (depth === 0) return evaluate(s);
-    if ((++ctx.nodes & 511) === 0 && performance.now() > ctx.deadline) throw ctx;
+    if (++ctx.nodes > ctx.limit) throw ctx;
     const acts = ordered(s, sActions(s));
     if (!acts.length) return 0;
     let best = -Infinity;
@@ -628,17 +628,17 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     return best;
   }
 
-  // Iterative deepening within a time budget; returns an action in the game's own format.
+  // Iterative deepening within a node budget, so the bot plays the same on fast and slow computers;
+  // returns an action in the game's own format.
   function chooseAction(G, level) {
     const cfg = AI_LEVELS[level] || AI_LEVELS.normal;
     const s = sFrom(G);
-    const deadline = performance.now() + cfg.ms;
-    const ctx = { nodes: 0, deadline };
+    const ctx = { nodes: 0, limit: Infinity };
     let acts = ordered(s, sActions(s));
     if (!acts.length) return null;
     let results = acts.map(a => [a, 0]);
     for (let d = 1; d <= cfg.maxDepth; d++) {
-      ctx.deadline = d <= 2 ? Infinity : deadline; // always see at least the opponent's reply
+      ctx.limit = d <= 2 ? Infinity : cfg.nodes; // always see at least the opponent's reply
       try {
         const round = [];
         let alpha = -Infinity;
@@ -663,7 +663,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
         acts = round.map(x => x[0]);
       } catch (e) {
         if (e !== ctx) throw e;
-        break; // out of time: keep the last finished depth
+        break; // out of nodes: keep the last finished depth
       }
     }
     chooseAction.lastScore = results[0][1];
@@ -1670,7 +1670,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
 
   // ---------- Evaluation bar ----------
   // After each change, a short search (the bot's own evaluation) rates the position for White.
-  AI_LEVELS.evalbar = { ms: 200, maxDepth: 8, noise: 0 };
+  AI_LEVELS.evalbar = { nodes: 500, maxDepth: 8, noise: 0 };
   let evalKey = '', evalTimer = null, lastEval = null;
   function scheduleEval() {
     const G = shownGame();
