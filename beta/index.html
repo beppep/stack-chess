@@ -52,13 +52,40 @@ body {
   padding-block: 20px 40px;
 }
 .app { max-width: 1320px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
-h1 {
-  font-family: var(--font-display); font-weight: 700; font-size: clamp(1.7rem, 4vw, 2.4rem);
-  letter-spacing: 0.06em; margin: 0; text-wrap: balance;
+/* Site header: logo, links, account area (Task 7 fills it in) */
+.site { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 22px; }
+.logo {
+  font-family: var(--font-display); font-weight: 700; font-size: clamp(1.4rem, 3.4vw, 1.8rem);
+  letter-spacing: 0.06em; color: var(--fg); text-decoration: none; white-space: nowrap;
 }
-h1 span { color: var(--amber); }
-.tag { margin: 0; color: var(--muted); font-size: 1.02rem; }
+.logo span { color: var(--amber); }
+.nav { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.nav a { color: var(--muted); font-weight: 700; text-decoration: none; }
+.nav a:hover, .nav a[aria-current="page"] { color: var(--fg); }
+.nav a[aria-current="page"] { box-shadow: 0 2px 0 var(--amber); }
+.account { display: flex; gap: 8px; }
+@media (max-width: 640px) { .nav { order: 3; width: 100%; } }
+a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-radius: 4px; }
+
+/* Home */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px); gap: 48px; align-items: center; max-width: 1100px; width: 100%; margin: 40px auto 0; }
+@media (max-width: 820px) { .hero { grid-template-columns: minmax(0, 1fr); gap: 28px; margin-top: 16px; } }
+.hero h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.8rem, 4vw, 2.6rem); line-height: 1.15; margin: 0 0 12px; text-wrap: balance; }
+.lead { color: var(--muted); font-size: 1.12rem; margin: 0 0 8px; max-width: 34em; }
+.howlink { color: var(--amber); font-weight: 700; text-decoration: none; }
+.howlink:hover { text-decoration: underline; }
+.modes { display: flex; flex-direction: column; gap: 10px; margin-top: 28px; max-width: 360px; }
+.btn.mode { display: flex; align-items: center; gap: 14px; text-align: left; padding: 14px 18px; font-size: 1.12rem; }
+.mode small { display: block; font-weight: 400; font-size: .9rem; opacity: .75; }
+.mode .ic { font-family: var(--font-glyph); font-size: 1.6rem; width: 1.6rem; text-align: center; font-weight: 400; }
+.online-count { color: var(--muted); font-size: .9rem; margin-top: -4px; }
+.online-count:not(:empty)::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
+.deco .sq { cursor: default; }
+
+/* Text pages (How to play, Extras, placeholders) */
+.page { max-width: 760px; width: 100%; margin: 24px auto 0; }
+.page h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.6rem, 3.6vw, 2.2rem); letter-spacing: .04em; margin: 0 0 14px; overflow-wrap: anywhere; }
+.page p { color: var(--muted); }
 
 .table {
   display: grid;
@@ -185,19 +212,21 @@ svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-ev
 .promo-row .pc { font-size: min(9.6cqw, 52px); }
 
 .controls { display: flex; flex-wrap: wrap; gap: 10px; }
-button.btn {
+.btn {
   font-family: var(--font-body); font-weight: 700; font-size: 1rem; letter-spacing: .01em;
   border-radius: 8px; padding: 10px 16px; cursor: pointer; border: 1px solid var(--line);
   background: var(--panel-2); color: var(--fg); transition: background .15s, transform .1s, border-color .15s;
 }
-button.btn:hover:not(:disabled) { background: #312b42; }
-button.btn:active:not(:disabled) { transform: translateY(1px); }
-button.btn:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; }
-button.btn:disabled { opacity: .4; cursor: not-allowed; }
-button.btn.primary { background: var(--amber); color: #1a1408; border-color: transparent; }
-button.btn.primary.b { background: var(--teal); color: #08171a; }
-button.btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
-button.btn.warn { border-color: var(--fizzle); color: var(--fizzle); }
+.btn:hover:not(:disabled) { background: #312b42; }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.primary { background: var(--amber); color: #1a1408; border-color: transparent; }
+.btn.primary.b { background: var(--teal); color: #08171a; }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn.warn { border-color: var(--fizzle); color: var(--fizzle); }
+.btn.ghost { background: none; }
+a.btn { display: inline-block; text-decoration: none; }
 .spacer { flex: 1; }
 
 /* Side panel */
@@ -250,10 +279,8 @@ button.btn.warn { border-color: var(--fizzle); color: var(--fizzle); }
 .log .ok { color: var(--ok); } .log .bad { color: var(--fizzle); }
 .log .empty { font-style: italic; }
 
-details.rules summary { cursor: pointer; font-family: var(--font-display); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 1.05rem; }
-details.rules summary:focus-visible { outline: 2px solid var(--sel); outline-offset: 3px; border-radius: 4px; }
-details.rules ul { margin: 10px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: .93rem; max-width: 65ch; }
-details.rules b { color: var(--fg); font-weight: 700; }
+.rules ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; color: var(--muted); max-width: 65ch; }
+.rules b { color: var(--fg); font-weight: 700; }
 
 /* Mode switch */
 .modebar { display: inline-flex; align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
@@ -314,7 +341,7 @@ details.rules b { color: var(--fg); font-weight: 700; }
 .online .note.warn { color: var(--amber); }
 .btnrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .joinrow { display: flex; flex-direction: column; gap: 8px; margin: 0; }
-button.btn.small { padding: 7px 12px; font-size: .92rem; }
+.btn.small { padding: 7px 12px; font-size: .92rem; }
 .online input {
   flex: 1; min-width: 0; font-family: var(--font-mono); font-size: .9rem; color: var(--fg);
   background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
@@ -352,12 +379,74 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
 <body>
 
 <div class="app">
-  <header>
-    <h1>Stack <span>Chess</span></h1>
-    <p class="tag">Regular chess, except every move can be answered before it happens. <b>Beta:</b> online games run on the new game server.</p>
+  <header class="site">
+    <a class="logo" href="#/">Stack <span>Chess</span></a>
+    <nav class="nav" aria-label="Site">
+      <a href="#/leaderboard" data-view="leaderboard">Leaderboard</a>
+      <a href="#/how" data-view="how">How to play</a>
+      <a href="#/extras" data-view="extras">Extras</a>
+    </nav>
+    <span class="spacer"></span>
+    <div class="account" id="account">
+      <a class="btn small ghost" href="#/login">Log in</a>
+      <a class="btn small primary" href="#/signup">Sign up</a>
+    </div>
   </header>
 
-  <main class="table">
+  <main class="hero view" id="view-home" hidden>
+    <div>
+      <h1>Chess where every move can be answered before it happens</h1>
+      <p class="lead">Moves go on a stack. Your opponent can respond on top, you can respond to that, and then it all resolves from the top down.</p>
+      <a class="howlink" href="#/how">What is this? How to play →</a>
+      <div class="modes">
+        <a class="btn primary mode" id="playOnline" href="#/online"><span class="ic">♚︎</span><span>Play online<small>Find an opponent</small></span></a>
+        <span class="online-count" id="onlineCount"></span>
+        <a class="btn mode" href="#/computer"><span class="ic">♞︎</span><span>Vs computer<small>Easy, normal or hard</small></span></a>
+        <a class="btn mode" href="#/local"><span class="ic">♟︎</span><span>Local versus<small>Two players, one screen</small></span></a>
+      </div>
+    </div>
+    <div class="board-frame deco" aria-hidden="true">
+      <div class="board" id="homeBoard"></div>
+      <svg class="arrows" viewBox="0 0 800 800">
+        <defs>
+          <marker id="deco-w" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="3.4" markerHeight="3.4" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="var(--amber)"/></marker>
+          <marker id="deco-b" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="3.4" markerHeight="3.4" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="var(--teal)"/></marker>
+        </defs>
+        <g class="arrow w"><path class="shaft" d="M250,450 L515,185" marker-end="url(#deco-w)"/></g>
+        <g class="arrow b"><path class="shaft" d="M350,50 L715,415" marker-end="url(#deco-b)"/></g>
+      </svg>
+    </div>
+  </main>
+
+  <main class="page view" id="view-leaderboard" hidden><h1>Leaderboard</h1></main>
+  <main class="page view" id="view-profile" hidden><h1 id="profileName"></h1></main>
+  <main class="page view" id="view-login" hidden><h1>Log in</h1></main>
+  <main class="page view" id="view-signup" hidden><h1>Sign up</h1></main>
+  <main class="page view" id="view-extras" hidden>
+    <h1>Extras</h1>
+    <p>Puzzles — coming soon.</p>
+  </main>
+  <main class="page view" id="view-how" hidden>
+    <h1>How to play</h1>
+    <div class="panel rules">
+      <ul>
+        <li><b>Moving puts the move on the stack.</b> It shows as an arrow. Nothing on the board changes yet.</li>
+        <li><b>Your opponent can respond</b> by spending their turn on a move of their own. It goes on top of the stack. Then you can respond to that, and so on.</li>
+        <li><b>Or let it resolve.</b> The stack resolves from the top down: the last response first, the original move last. Then it's your normal turn.</li>
+        <li><b>Fizzle.</b> When a move resolves, its piece must still be on its starting square and able to reach the target square (nothing in the way, not your own piece on it). If not, nothing happens.</li>
+        <li><b>Captures and moves are the same.</b> A move goes through whether or not there is still something to take. If the target dodged, the piece just moves there. If an enemy piece moved onto the square, it gets taken.</li>
+        <li><b>Pawns stay legal.</b> A straight pawn push fizzles if anything is now in front of it, and a diagonal pawn capture fizzles if there is nothing left to take.</li>
+        <li><b>Responses</b> are chosen from the board as it is now, before anything on the stack happens.</li>
+        <li><b>One move per piece.</b> A piece that already has a move on the stack can't be given another one until the stack resolves. Those pieces are dimmed.</li>
+        <li><b>Clock (optional).</b> Pick a time control before starting a game. Your clock runs while it's your turn to move or respond, pauses while the stack resolves, and gains a few seconds after each move. Run out and you lose.</li>
+        <li><b>Online.</b> Create a game and send the invite link. No sign-in needed. Games are kept on the server, so you can reload or come back later from the same browser and keep your seat, and the clock keeps running while you are away. Anyone else who opens the link watches, and after the game the link shows every game played in it. Or press <i>Search for game</i> to be paired with someone else who is searching.</li>
+        <li><b>Replays.</b> <i>Copy replay link</i> puts the whole game in a link. Anyone who opens it can step through the game with the arrow keys. Games you played or watched online can also be replayed from <i>Your recent games</i>.</li>
+        <li><b>No check rules.</b> You may move into check, leave your king attacked, or castle through attacked squares. You win by capturing the king, and your opponent can respond to save it. There is no checkmate.</li>
+      </ul>
+    </div>
+  </main>
+
+  <main class="table view" id="view-game" hidden>
     <aside class="stackcol" aria-label="The stack">
       <div class="panel">
         <h2>The stack</h2>
@@ -456,23 +545,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       </div>
 
       <div class="panel">
-        <details class="rules" id="rules">
-          <summary>How it works</summary>
-          <ul>
-            <li><b>Moving puts the move on the stack.</b> It shows as an arrow. Nothing on the board changes yet.</li>
-            <li><b>Your opponent can respond</b> by spending their turn on a move of their own. It goes on top of the stack. Then you can respond to that, and so on.</li>
-            <li><b>Or let it resolve.</b> The stack resolves from the top down: the last response first, the original move last. Then it's your normal turn.</li>
-            <li><b>Fizzle.</b> When a move resolves, its piece must still be on its starting square and able to reach the target square (nothing in the way, not your own piece on it). If not, nothing happens.</li>
-            <li><b>Captures and moves are the same.</b> A move goes through whether or not there is still something to take. If the target dodged, the piece just moves there. If an enemy piece moved onto the square, it gets taken.</li>
-            <li><b>Pawns stay legal.</b> A straight pawn push fizzles if anything is now in front of it, and a diagonal pawn capture fizzles if there is nothing left to take.</li>
-            <li><b>Responses</b> are chosen from the board as it is now, before anything on the stack happens.</li>
-            <li><b>One move per piece.</b> A piece that already has a move on the stack can't be given another one until the stack resolves. Those pieces are dimmed.</li>
-            <li><b>Clock (optional).</b> Pick a time control before starting a game. Your clock runs while it's your turn to move or respond, pauses while the stack resolves, and gains a few seconds after each move. Run out and you lose.</li>
-            <li><b>Online.</b> Create a game and send the invite link. No sign-in needed. Games are kept on the server, so you can reload or come back later from the same browser and keep your seat, and the clock keeps running while you are away. Anyone else who opens the link watches, and after the game the link shows every game played in it. Or press <i>Search for game</i> to be paired with someone else who is searching.</li>
-            <li><b>Replays.</b> <i>Copy replay link</i> puts the whole game in a link. Anyone who opens it can step through the game with the arrow keys. Games you played or watched online can also be replayed from <i>Your recent games</i>.</li>
-            <li><b>No check rules.</b> You may move into check, leave your king attacked, or castle through attacked squares. You win by capturing the king, and your opponent can respond to save it. There is no checkmate.</li>
-          </ul>
-        </details>
+        <a class="howlink" href="#/how">How to play →</a>
       </div>
 
       <div class="panel">
@@ -1005,7 +1078,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     stopNet();
     NET.code = null; NET.role = null; NET.status = ''; NET.note = '';
     clearSel();
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
+    try { history.replaceState(null, '', '#/online'); } catch (_) {}
     renderAll();
   }
 
@@ -1013,9 +1086,9 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     if (NET.connected) send({ type: 'rematch' });
   }
 
+  // The address bar is the router's job (see Views); this only switches the game table.
   function setMode(mode) {
     if (V.busy || V.mode === mode) return;
-    if (V.mode === 'replay') { try { history.replaceState(null, '', location.pathname + location.search + (NET.code ? '#' + NET.code : '')); } catch (_) {} }
     V.mode = mode;
     clearSel();
     if (mode === 'cpu') V.flipped = CPU.color === 'w';
@@ -1534,7 +1607,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     frag.appendChild(row);
     const row2 = el('div', 'btnrow');
     const cp = button('Copy link', '', () => copyText(REP.link, cp));
-    row2.append(cp, button('Close replay', '', () => setMode(REP.back === 'replay' ? 'local' : REP.back)));
+    row2.append(cp, button('Close replay', '', () => go(modeHash(REP.back === 'replay' ? 'local' : REP.back))));
     frag.appendChild(row2);
     box.replaceChildren(frag);
   }
@@ -1546,17 +1619,11 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   }
   $('replayBtn').addEventListener('click', () => copyText(replayLink(shownGame(), shownNames()), $('replayBtn')));
   document.addEventListener('keydown', e => {
-    if (V.mode !== 'replay' || /INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || '')) return;
+    if (V.mode !== 'replay' || view !== 'game' || /INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || '')) return;
     const to = { ArrowLeft: REP.pos - 1, ArrowRight: REP.pos + 1, Home: 0, End: REP.acts.length }[e.key];
     if (to === undefined) return;
     e.preventDefault();
     replayStep(to);
-  });
-  // A replay link or a game link pasted into an open page.
-  window.addEventListener('hashchange', () => {
-    const code = location.hash.slice(1).toUpperCase();
-    if (location.hash.startsWith('#replay')) openReplay(parseReplay(location.hash));
-    else if (/^[A-Z0-9]{6}$/.test(code) && code !== NET.code && !V.busy) { setMode('online'); openGame(code); }
   });
 
   // ---------- Computer opponent (play) ----------
@@ -1793,9 +1860,9 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
     renderAll();
     if (V.mode === 'cpu') cpuTurn();
   });
-  $('modeLocal').addEventListener('click', () => setMode('local'));
-  $('modeOnline').addEventListener('click', () => setMode('online'));
-  $('modeCpu').addEventListener('click', () => setMode('cpu'));
+  $('modeLocal').addEventListener('click', () => { if (!V.busy) go('#/local'); });
+  $('modeOnline').addEventListener('click', () => { if (!V.busy) go('#/online'); });
+  $('modeCpu').addEventListener('click', () => { if (!V.busy) go('#/computer'); });
   $('newBtn').addEventListener('click', () => {
     const btn = $('newBtn');
     if (V.busy) return;
@@ -1815,12 +1882,62 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { $('promo').hidden = true; clearSel(); render(); }
   });
-  try { $('rules').open = window.innerWidth >= 920; } catch (_) {}
+
+  // ---------- Views ----------
+  // One view at a time, picked from the hash. View routes start with #/ so they never look like
+  // a game code (#K7QF2M) or a replay (#replay…), which both open the game view as before.
+  const MODE_ROUTE = { local: 'local', computer: 'cpu', online: 'online' };
+  let view = '';
+  function show(v) {
+    if (v !== view) window.scrollTo(0, 0);
+    view = v;
+    document.querySelectorAll('.view').forEach(e => { e.hidden = e.id !== 'view-' + v; });
+    document.querySelectorAll('.nav a').forEach(a => {
+      if (a.dataset.view === v) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    });
+  }
+  function route() {
+    const hash = location.hash, code = hash.slice(1).toUpperCase();
+    if (hash.startsWith('#replay')) { show('game'); openReplay(parseReplay(hash)); return; }
+    if (/^[A-Z0-9]{6}$/.test(code)) {
+      show('game'); setMode('online');
+      if (code !== NET.code && !V.busy) openGame(code);
+      return;
+    }
+    const [name, arg] = hash.replace(/^#\/?/, '').split('/');
+    if (MODE_ROUTE[name]) {
+      show('game'); setMode(MODE_ROUTE[name]);
+      // An open online game keeps its own link.
+      if (name === 'online' && V.mode === 'online' && NET.code) { try { history.replaceState(null, '', '#' + NET.code); } catch (_) {} }
+      return;
+    }
+    if (name === 'u' && arg) {
+      let who = arg;
+      try { who = decodeURIComponent(arg); } catch (_) {}
+      $('profileName').textContent = who;
+      show('profile');
+      return;
+    }
+    show(['leaderboard', 'how', 'extras', 'login', 'signup'].includes(name) ? name : 'home');
+  }
+  // Go to a route; going to the one we're already on still re-runs it.
+  function go(hash) {
+    if (location.hash === hash) route(); else location.hash = hash;
+  }
+  function modeHash(mode) {
+    return mode === 'online' && NET.code ? '#' + NET.code : '#/' + (mode === 'cpu' ? 'computer' : mode);
+  }
+  window.addEventListener('hashchange', route);
+
+  // The home page's board: a position with one move on the stack for each side.
+  ['rnbqkbnr', 'pppp.ppp', '........', '....p...', '..B.P...', '........', 'PPPP.PPP', 'RNBQK.NR'].forEach((row, r) => [...row].forEach((ch, c) => {
+    const d = el('div', 'sq ' + ((r + c) % 2 ? 'dark' : 'light'));
+    if (ch !== '.') d.innerHTML = `<span class="pc ${ch === ch.toUpperCase() ? 'w' : 'b'}">${GLYPH[ch.toLowerCase()]}︎</span>`;
+    $('homeBoard').appendChild(d);
+  }));
 
   // ---------- Boot ----------
-  const h = (location.hash || '').slice(1).toUpperCase();
-  if (location.hash.startsWith('#replay')) openReplay(parseReplay(location.hash));
-  else if (/^[A-Z0-9]{6}$/.test(h)) { V.mode = 'online'; openGame(h); }
+  route();
   renderAll();
 })();
 </script>
