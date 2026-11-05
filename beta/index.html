@@ -815,8 +815,10 @@ a.btn { display: inline-block; text-decoration: none; }
   // browser by a random id kept in local storage, so reloading or coming back keeps your seat.
   const PROFILE = new URLSearchParams(location.search).get('profile') || '';
   const STORE = 'stackchess2' + (PROFILE ? '-' + PROFILE : '') + ':'; // separate from the old version's saved games
-  const SERVER = new URLSearchParams(location.search).get('server') ||
-    (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'ws://127.0.0.1:8787' : 'wss://stack-chess.bror-beppe-persson.workers.dev');
+  // ?server= is honoured only on a local page: the session token goes to this server, so a shared link must not pick it.
+  const LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+  const SERVER = (LOCAL && new URLSearchParams(location.search).get('server')) ||
+    (LOCAL ? 'ws://127.0.0.1:8787' : 'wss://stack-chess.bror-beppe-persson.workers.dev');
   const NET = {
     code: null, role: null, hostColor: 'w', round: 1,
     actions: [], applied: 0, G: freshGame(), clock: null,
@@ -1053,7 +1055,14 @@ a.btn { display: inline-block; text-decoration: none; }
   function connect() {
     clearTimeout(NET.retryTimer);
     if (!NET.code || NET.missing) return;
-    const ws = new WebSocket(SERVER + '/room/' + NET.code);
+    let ws;
+    try { ws = new WebSocket(SERVER + '/room/' + NET.code); } catch (_) {
+      NET.ws = null; NET.open = false; NET.connected = false;
+      NET.status = 'Cannot reach the game server. Retrying…';
+      NET.retryTimer = setTimeout(connect, 3000);
+      renderAll();
+      return;
+    }
     NET.ws = ws;
     ws.onopen = () => {
       if (ws !== NET.ws) return;
@@ -1098,8 +1107,8 @@ a.btn { display: inline-block; text-decoration: none; }
   // we are searching, the code of the game once someone else is searching too (a rated 10+5 room).
   const LOBBY = { ws: null, count: null, searching: false, status: '', timer: null };
   function renderCount() {
-    const n = LOBBY.count;
-    $('onlineCount').textContent = n ? n + (n === 1 ? ' player online' : ' players online') : '';
+    const n = typeof LOBBY.count === 'number' ? Math.max(0, LOBBY.count - 1) : null; // not counting this page
+    $('onlineCount').textContent = n === null ? '' : n + (n === 1 ? ' other player online' : ' other players online');
   }
   function lobbySend(msg) {
     if (LOBBY.ws && LOBBY.ws.readyState === 1) { try { LOBBY.ws.send(JSON.stringify(msg)); } catch (_) {} return true; }
@@ -1107,7 +1116,15 @@ a.btn { display: inline-block; text-decoration: none; }
   }
   function lobbyConnect() {
     clearTimeout(LOBBY.timer);
-    const ws = new WebSocket(SERVER + '/lobby/play');
+    let ws;
+    try { ws = new WebSocket(SERVER + '/lobby/play'); } catch (_) {
+      LOBBY.ws = null; LOBBY.count = null;
+      if (LOBBY.searching) LOBBY.status = 'Cannot reach the game server. Retrying…';
+      renderCount();
+      renderOnline();
+      LOBBY.timer = setTimeout(lobbyConnect, 3000);
+      return;
+    }
     LOBBY.ws = ws;
     ws.onopen = () => {
       if (ws !== LOBBY.ws) return;
@@ -1412,7 +1429,8 @@ a.btn { display: inline-block; text-decoration: none; }
       const sub = G.phase === 'respond'
         ? `${nameOfColor(c) || 'Your opponent'} is deciding whether to respond to ${G.stack[G.stack.length - 1].label}.`
         : `Waiting for ${nameOfColor(c) || 'your opponent'} to move.`;
-      s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`, sub);
+      s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`, '');
+      s.querySelector('.status-sub').textContent = sub; // the name is user-provided: no HTML
       return;
     }
     if (V.mode === 'cpu' && c === CPU.color && G.phase !== 'resolving') {
@@ -2018,6 +2036,7 @@ a.btn { display: inline-block; text-decoration: none; }
   // a game code (#K7QF2M) or a replay (#replay…), which both open the game view as before.
   const MODE_ROUTE = { local: 'local', computer: 'cpu', online: 'online' };
   let view = '', lastHash = '';
+  const AUTH_ROUTE = /^#\/(login|signup)(\/|$)/;
   function show(v) {
     if (v !== view) window.scrollTo(0, 0);
     view = v;
@@ -2066,8 +2085,11 @@ a.btn { display: inline-block; text-decoration: none; }
     const seats = { [hc]: 'host', [other(hc)]: 'guest' };
     const tc = timeControl(g.clock);
     const opp = g.opponent && g.opponent.account ? g.opponent.name : 'guest';
+    if (V.busy) return;
+    let acts;
+    try { acts = replay(g.actions, seats, tc).acts; } catch (_) { return; }
     show('game');
-    openReplay({ acts: replay(g.actions, seats, tc).acts, tc, names: { [g.color]: who, [oc]: opp }, ret });
+    openReplay({ acts, tc, names: { [g.color]: who, [oc]: opp }, ret });
   }
   async function renderProfile(who) {
     const box = $('profileBody'), tok = ++viewToken, ret = location.hash;
@@ -2112,6 +2134,8 @@ a.btn { display: inline-block; text-decoration: none; }
   }
   function route() {
     const hash = location.hash, code = hash.slice(1).toUpperCase();
+    if (ACCT && AUTH_ROUTE.test(hash)) { go(lastHash || '#/'); return; } // logged in: nothing to do there
+    if (hash.length > 1 && !AUTH_ROUTE.test(hash)) lastHash = hash; // where to return after logging in
     if (hash.startsWith('#replay')) { show('game'); openReplay(parseReplay(hash)); return; }
     if (/^[A-Z0-9]{6}$/.test(code)) {
       show('game'); setMode('online');
@@ -2120,7 +2144,6 @@ a.btn { display: inline-block; text-decoration: none; }
     }
     if (!/^#\/[^/]/.test(hash)) { show('home'); return; } // view routes need the #/ prefix
     const [name, arg] = hash.slice(2).split('/');
-    if (name !== 'login' && name !== 'signup') lastHash = hash;
     if (MODE_ROUTE[name]) {
       show('game'); setMode(MODE_ROUTE[name]);
       // An open online game keeps its own link.
