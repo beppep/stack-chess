@@ -45,10 +45,11 @@ function accept(ctx, attachment) {
   return new Response(null, { status: 101, webSocket: pair[0] });
 }
 
-function newRoom(code, clock, hostColor, host, guest) {
+function newRoom(code, clock, hostColor, host, guest, rated = false) {
   return {
     code, clock: R.TIME_CONTROLS[clock] ? clock : null, hostColor: hostColor === 'b' ? 'b' : 'w',
-    host, guest, joined: { host: false, guest: false }, names: {},
+    host, guest, rated: !!rated, accounts: { host: null, guest: null }, reported: 0,
+    joined: { host: false, guest: false }, names: {},
     round: 1, actions: [], chat: [], turnStart: 0, grace: 0, pastCount: 0
   };
 }
@@ -93,7 +94,8 @@ export class Room extends DurableObject {
     const past = [...(await this.ctx.storage.list({ prefix: 'past:' })).values()];
     return {
       type: 'state', role: me.role, round: s.round, hostColor: s.hostColor, clock: s.clock, actions: s.actions, past,
-      names: s.names, chat: s.chat.map(c => ({ c: c.c, r: c.r, text: c.text, n: c.n, mine: c.from === me.token })),
+      names: s.names, rated: !!s.rated, accounts: { host: s.accounts?.host?.name || null, guest: s.accounts?.guest?.name || null },
+      chat: s.chat.map(c => ({ c: c.c, r: c.r, text: c.text, n: c.n, mine: c.from === me.token })),
       left: G.clock && ready(s) && playing(G) ? Math.max(0, Math.round(this.timeLeft(G))) : undefined,
       ...this.presence()
     };
@@ -107,6 +109,20 @@ export class Room extends DurableObject {
     await this.save();
     await this.armClock();
     this.broadcast({ type: 'act', round: s.round, n: s.actions.length - 1, a }, except);
+    await this.reportRound();
+  }
+  // Tells the accounts server how a finished round ended, once per round.
+  async reportRound() {
+    const s = this.s, G = this.game();
+    if (G.phase !== 'over' || (s.reported || 0) >= s.round) return;
+    const seat = role => ({ key: s.accounts?.[role]?.key || null, name: s.names[role] || '' });
+    const seats = { [s.hostColor]: seat('host'), [R.other(s.hostColor)]: seat('guest') };
+    s.reported = s.round;
+    await this.save();
+    await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).report({
+      code: s.code, round: s.round, clock: s.clock, hostColor: s.hostColor, actions: s.actions, endedAt: Date.now(),
+      rated: !!s.rated, winner: G.result?.winner || null, seats
+    });
   }
   async flag(G) {
     const a = { t: 'flag', c: G.cur, by: G.cur === this.s.hostColor ? 'host' : 'guest' };
@@ -115,9 +131,9 @@ export class Room extends DurableObject {
   }
 
   // Called by the Lobby when two searchers are paired. Returns false if the code is already used.
-  async init({ code, clock, hostColor, host, guest }) {
+  async init({ code, clock, hostColor, host, guest, rated }) {
     if (await this.load()) return false;
-    this.s = newRoom(code, clock, hostColor, host, guest);
+    this.s = newRoom(code, clock, hostColor, host, guest, rated);
     await this.save();
     return true;
   }
@@ -168,7 +184,7 @@ export class Room extends DurableObject {
         return;
       }
       case 'name':
-        if (!player) return;
+        if (!player || s.accounts?.[me.role]) return;
         s.names[me.role] = cleanName(m.name);
         await this.save();
         this.broadcast({ type: 'names', names: s.names }, ws);
@@ -207,7 +223,11 @@ export class Room extends DurableObject {
     if (!role && !s.guest) { s.guest = token; role = 'guest'; }
     role = role || 'watch';
     if (role !== 'watch') {
-      s.names[role] = cleanName(m.name);
+      const who = typeof m.session === 'string' && m.session
+        ? await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).whoami(m.session.slice(0, 64)) : null;
+      s.accounts = s.accounts || { host: null, guest: null };
+      s.accounts[role] = who ? { key: who.key, name: who.name } : null;
+      s.names[role] = who ? who.name : cleanName(m.name);
       if (!s.joined[role]) {
         s.joined[role] = true;
         if (ready(s)) { s.turnStart = Date.now(); s.grace = LATENCY; } // both are here: White's clock starts
