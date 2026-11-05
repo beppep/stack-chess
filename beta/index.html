@@ -83,6 +83,7 @@ a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-rad
 .mode .ic { font-family: var(--font-glyph); font-size: 1.6rem; width: 1.6rem; text-align: center; font-weight: 400; }
 .online-count { color: var(--muted); font-size: .9rem; margin-top: -4px; }
 .online-count:empty { display: none; }
+.logged-in .btn.mode.how { order: 1; } /* How to play comes first for newcomers, last once logged in */
 .online-count:not(:empty)::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
 .deco .sq { cursor: default; }
 
@@ -442,10 +443,11 @@ a.btn { display: inline-block; text-decoration: none; }
       <p class="lead">Moves go on a stack. Your opponent can respond on top, you can respond to that, and then it all resolves from the top down.</p>
       <a class="howlink" href="#/how">What is this? How to play →</a>
       <div class="modes">
-        <a class="btn primary mode" id="playOnline" href="#/online"><span class="ic">♚︎</span><span>Play online<small>Find an opponent</small></span></a>
+        <a class="btn mode how" href="#/how"><span class="ic">?</span><span>How to play<small>The stack in two minutes</small></span></a>
+        <a class="btn primary mode" href="#/local"><span class="ic">♟︎</span><span>Local versus<small>Two players, one screen</small></span></a>
+        <a class="btn primary mode" href="#/computer"><span class="ic">♞︎</span><span>Vs computer<small>Easy, normal or hard</small></span></a>
+        <a class="btn mode" id="playOnline" href="#/online"><span class="ic">♚︎</span><span>Play online<small>Find an opponent</small></span></a>
         <span class="online-count" id="onlineCount"></span>
-        <a class="btn mode" href="#/computer"><span class="ic">♞︎</span><span>Vs computer<small>Easy, normal or hard</small></span></a>
-        <a class="btn mode" href="#/local"><span class="ic">♟︎</span><span>Local versus<small>Two players, one screen</small></span></a>
       </div>
     </div>
     <div class="board-frame deco" aria-hidden="true">
@@ -2167,6 +2169,7 @@ a.btn { display: inline-block; text-decoration: none; }
   function renderAccount() {
     const box = $('account');
     box.textContent = '';
+    document.body.classList.toggle('logged-in', !!ACCT);
     if (ACCT) {
       const who = el('a', 'who', ACCT.name);
       who.href = '#/u/' + encodeURIComponent(ACCT.name);
