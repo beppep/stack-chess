@@ -284,28 +284,34 @@ export class Lobby extends DurableObject {
   async webSocketMessage(ws, data) {
     const m = parse(data);
     if (!m) return;
-    if (m.type === 'cancel') return ws.serializeAttachment({});
+    const gen = ((ws.deserializeAttachment() || {}).gen || 0) + 1; // any search or cancel bumps it, so a stale search can tell
+    if (m.type === 'cancel') return ws.serializeAttachment({ gen });
     if (m.type !== 'search' || typeof m.token !== 'string') return;
+    ws.serializeAttachment({ gen }); // not a searcher until whoami is back
     const token = m.token.slice(0, 64);
     let key = null;
     if (typeof m.session === 'string' && m.session) {
       try { key = (await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).whoami(m.session.slice(0, 64)))?.key || null; } catch (_) {}
     }
-    ws.serializeAttachment({ token, key, at: Date.now() });
-    const mine = ws.deserializeAttachment();
+    if ((ws.deserializeAttachment() || {}).gen !== gen) return; // cancelled or searched again meanwhile
+    const mine = { token, key, at: Date.now(), gen };
     const waiting = this.ctx.getWebSockets().filter(o => o !== ws).map(o => ({ o, a: o.deserializeAttachment() || {} }))
       .filter(({ a }) => a.token && a.token !== token && (!a.key || !key || a.key !== key))
       .sort((x, y) => x.a.at - y.a.at)[0];
-    if (!waiting) return;
+    if (!waiting) return ws.serializeAttachment(mine);
+    // Claim both right now (no await since picking), so nobody else can pair with either while the room is made.
+    const claimed = { o: waiting.o, gen: waiting.a.gen + 1 };
+    waiting.o.serializeAttachment({ gen: claimed.gen });
+    ws.serializeAttachment({ gen });
     for (let i = 0; i < 5; i++) {
       const code = randomCode();
       const hostColor = Math.random() < 0.5 ? 'w' : 'b';
-      const ok = await this.env.ROOM.get(this.env.ROOM.idFromName(code)).init({ code, clock: '10+5', hostColor, host: waiting.a.token, guest: mine.token, rated: true });
-      if (ok) {
-        for (const o of [waiting.o, ws]) { o.serializeAttachment({}); send(o, { type: 'matched', code }); }
-        return;
-      }
+      const ok = await this.env.ROOM.get(this.env.ROOM.idFromName(code)).init({ code, clock: '10+5', hostColor, host: waiting.a.token, guest: token, rated: true });
+      if (ok) { for (const o of [waiting.o, ws]) send(o, { type: 'matched', code }); return; }
     }
+    // No room could be made: both go back to searching, unless they cancelled or searched again meanwhile.
+    if ((waiting.o.deserializeAttachment() || {}).gen === claimed.gen) waiting.o.serializeAttachment({ ...waiting.a, gen: claimed.gen });
+    if ((ws.deserializeAttachment() || {}).gen === gen) ws.serializeAttachment(mine);
   }
   async webSocketClose(ws, code) {
     try { ws.close(code === 1005 ? 1000 : code); } catch (_) {}
