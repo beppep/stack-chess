@@ -95,6 +95,7 @@ export async function startServer({ port = 0 } = {}) {
       deserializeAttachment: () => clone(att)
     };
     inst.ctx.acceptWebSocket(ws);
+    if (kind === 'lobby') inst.count();
     let chain = Promise.resolve(); // one message at a time per socket
     sock.on('message', d => { chain = chain.then(async () => { inst.s = undefined; inst.G = null; await inst.webSocketMessage(ws, d.toString()); }).catch(e => console.error('ERR', e)); });
     sock.on('close', c => { chain = chain.then(async () => { await inst.webSocketClose(ws, c); inst.ctx.sockets.delete(ws); }).catch(e => console.error('ERR', e)); });

@@ -1,6 +1,6 @@
 // Stack Chess game server (Cloudflare Workers + Durable Objects).
 //   /room/CODE   one Room per game code: seats, every action, clocks, chat, earlier games
-//   /lobby/TC    one Lobby per clock setting: pairs two people who press "Search for game"
+//   /lobby/play  the one Lobby: counts who is online and pairs two people who press "Play online"
 // Both are WebSocket endpoints. The page sends JSON messages and gets JSON messages back.
 import { DurableObject } from 'cloudflare:workers';
 import '../../beta/rules.js';
@@ -10,7 +10,6 @@ export { Accounts };
 
 const R = globalThis.StackRules;
 const CODE = /^[A-Z0-9]{6}$/;
-const LOBBIES = Object.keys(R.TIME_CONTROLS).concat('off');
 const LATENCY = 1500;                 // free time on top of each turn for the network
 const STEP = 750;                     // the page's resolve animation step, which doesn't count on the clock
 
@@ -21,7 +20,7 @@ export default {
     if (kind === 'api') return env.ACCOUNTS.get(env.ACCOUNTS.idFromName('main')).fetch(req);
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('Stack Chess server\n');
     if (kind === 'room' && CODE.test(name)) return env.ROOM.get(env.ROOM.idFromName(name)).fetch(req);
-    if (kind === 'lobby' && LOBBIES.includes(name)) return env.LOBBY.get(env.LOBBY.idFromName(name)).fetch(req);
+    if (kind === 'lobby' && name === 'play') return env.LOBBY.get(env.LOBBY.idFromName(name)).fetch(req);
     return new Response('Not found', { status: 404 });
   }
 };
@@ -269,31 +268,48 @@ export class Room extends DurableObject {
   async webSocketError(ws) { return this.webSocketClose(ws, 1011); }
 }
 
-// One clock setting. Whoever searches waits here; the next person with the same clock is paired
-// with them into a new room with a random color, and both are sent its code.
+// The one lobby ("Play online"). Every open page stays connected so everyone can see how many are online.
+// Pages that press search wait here; the next searcher with a different token and account is paired
+// with them into a new rated 10+5 room with a random color, and both are sent its code.
 export class Lobby extends DurableObject {
-  async fetch(req) {
-    const tc = decodeURIComponent(new URL(req.url).pathname.split('/')[2] || '');
-    return accept(this.ctx, { tc });
+  async fetch() {
+    const res = accept(this.ctx, {});
+    this.count();
+    return res;
+  }
+  count(closing) {
+    const open = this.ctx.getWebSockets().filter(o => o !== closing);
+    for (const o of open) send(o, { type: 'count', n: open.length });
   }
   async webSocketMessage(ws, data) {
     const m = parse(data);
-    if (!m || m.type !== 'search' || typeof m.token !== 'string') return;
-    const me = ws.deserializeAttachment() || {};
+    if (!m) return;
+    if (m.type === 'cancel') return ws.serializeAttachment({});
+    if (m.type !== 'search' || typeof m.token !== 'string') return;
     const token = m.token.slice(0, 64);
-    const waiting = this.ctx.getWebSockets().find(o => o !== ws && (o.deserializeAttachment() || {}).token && o.deserializeAttachment().token !== token);
-    if (!waiting) { ws.serializeAttachment({ ...me, token }); return; }
-    const them = waiting.deserializeAttachment();
-    waiting.serializeAttachment({ tc: them.tc }); // taken, so nobody else pairs with them meanwhile
+    let key = null;
+    if (typeof m.session === 'string' && m.session) {
+      try { key = (await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).whoami(m.session.slice(0, 64)))?.key || null; } catch (_) {}
+    }
+    ws.serializeAttachment({ token, key, at: Date.now() });
+    const mine = ws.deserializeAttachment();
+    const waiting = this.ctx.getWebSockets().filter(o => o !== ws).map(o => ({ o, a: o.deserializeAttachment() || {} }))
+      .filter(({ a }) => a.token && a.token !== token && (!a.key || !key || a.key !== key))
+      .sort((x, y) => x.a.at - y.a.at)[0];
+    if (!waiting) return;
     for (let i = 0; i < 5; i++) {
       const code = randomCode();
       const hostColor = Math.random() < 0.5 ? 'w' : 'b';
-      const ok = await this.env.ROOM.get(this.env.ROOM.idFromName(code)).init({ code, clock: me.tc, hostColor, host: them.token, guest: token });
+      const ok = await this.env.ROOM.get(this.env.ROOM.idFromName(code)).init({ code, clock: '10+5', hostColor, host: waiting.a.token, guest: mine.token, rated: true });
       if (ok) {
-        for (const o of [waiting, ws]) { send(o, { type: 'matched', code }); try { o.close(1000); } catch (_) {} }
+        for (const o of [waiting.o, ws]) { o.serializeAttachment({}); send(o, { type: 'matched', code }); }
         return;
       }
     }
   }
-  async webSocketClose(ws, code) { try { ws.close(code === 1005 ? 1000 : code); } catch (_) {} }
+  async webSocketClose(ws, code) {
+    try { ws.close(code === 1005 ? 1000 : code); } catch (_) {}
+    this.count(ws);
+  }
+  async webSocketError(ws) { return this.webSocketClose(ws, 1011); }
 }
