@@ -317,6 +317,24 @@ a.btn { display: inline-block; text-decoration: none; }
 .page .hintline { font-size: .9rem; margin: -4px 0 0; }
 .myname { font-weight: 700; overflow-wrap: anywhere; }
 
+/* Leaderboard and profiles */
+.tablewrap { overflow-x: auto; max-width: 100%; }
+.stats { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.stats th, .stats td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.stats th { font-size: .78rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.stats td.num, .stats th.num { text-align: right; }
+.stats a { color: var(--amber); font-weight: 700; }
+.stats .gname { white-space: normal; overflow-wrap: anywhere; min-width: 6em; }
+.stats .win { color: var(--amber); font-weight: 700; }
+.stats .loss { color: var(--muted); }
+.stats tr.game { cursor: pointer; }
+.stats tr.game:hover td { background: #312b42; }
+.stats tr.game button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+.stats tr.game button:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; }
+.profilehead { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 0 0 16px; color: var(--fg); font-size: 1.1rem; }
+.profilehead b { color: var(--amber); }
+.page .emptyline { color: var(--muted); margin: 8px 0; }
+
 /* Name box */
 .online input.nameinput { flex: 0 1 11rem; font-family: var(--font-body); font-weight: 700; font-size: .95rem; letter-spacing: 0; text-transform: none; }
 
@@ -443,8 +461,8 @@ a.btn { display: inline-block; text-decoration: none; }
     </div>
   </main>
 
-  <main class="page view" id="view-leaderboard" hidden><h1>Leaderboard</h1></main>
-  <main class="page view" id="view-profile" hidden><h1 id="profileName"></h1></main>
+  <main class="page view" id="view-leaderboard" hidden><h1>Leaderboard</h1><div id="leaderBody"></div></main>
+  <main class="page view" id="view-profile" hidden><h1 id="profileName"></h1><div id="profileBody"></div></main>
   <main class="page view" id="view-login" hidden><h1>Log in</h1><div id="loginBody"></div></main>
   <main class="page view" id="view-signup" hidden><h1>Sign up</h1><div id="signupBody"></div></main>
   <main class="page view" id="view-extras" hidden>
@@ -1681,7 +1699,7 @@ a.btn { display: inline-block; text-decoration: none; }
   function openReplay(r) {
     if (V.busy) return;
     if (V.mode !== 'replay') REP.back = V.mode;
-    REP.acts = r.acts; REP.tc = r.tc; REP.names = r.names || {}; REP.pos = 0; REP.G = freshGame(r.tc);
+    REP.ret = r.ret || null; REP.acts = r.acts; REP.tc = r.tc; REP.names = r.names || {}; REP.pos = 0; REP.G = freshGame(r.tc);
     REP.link = replayLink(replay(r.acts, null, r.tc), REP.names);
     V.mode = 'replay'; V.flipped = false; V.preview = null;
     $('promo').hidden = true;
@@ -1720,7 +1738,7 @@ a.btn { display: inline-block; text-decoration: none; }
     frag.appendChild(row);
     const row2 = el('div', 'btnrow');
     const cp = button('Copy link', '', () => copyText(REP.link, cp));
-    row2.append(cp, button('Close replay', '', () => go(modeHash(REP.back === 'replay' ? 'local' : REP.back))));
+    row2.append(cp, button('Close replay', '', () => go(REP.ret || modeHash(REP.back === 'replay' ? 'local' : REP.back))));
     frag.appendChild(row2);
     box.replaceChildren(frag);
   }
@@ -2009,6 +2027,89 @@ a.btn { display: inline-block; text-decoration: none; }
       if (a.dataset.view === v) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
   }
+  // Leaderboard and profile views. Names are always set with textContent; guests have no profile link.
+  let viewToken = 0;
+  function statsTable(heads) {
+    const wrap = el('div', 'tablewrap'), t = el('table', 'stats'), tr = el('tr');
+    heads.forEach(([h, num]) => { const th = el('th', num ? 'num' : '', h); th.scope = 'col'; tr.appendChild(th); });
+    t.appendChild(el('thead')).appendChild(tr);
+    const body = t.appendChild(el('tbody'));
+    wrap.appendChild(t);
+    return { wrap, body };
+  }
+  function profileLink(name) {
+    const a = el('a', '', name);
+    a.href = '#/u/' + encodeURIComponent(name);
+    return a;
+  }
+  async function renderLeaderboard() {
+    const box = $('leaderBody'), tok = ++viewToken;
+    box.textContent = '';
+    box.appendChild(el('p', 'emptyline', 'Loading\u2026'));
+    const r = await api('/api/leaderboard');
+    if (tok !== viewToken) return;
+    box.textContent = '';
+    if (!r.ok || !Array.isArray(r.data)) { box.appendChild(el('p', 'emptyline', "Can't reach the server")); return; }
+    if (!r.data.length) { box.appendChild(el('p', 'emptyline', 'No players yet')); return; }
+    const t = statsTable([['Rank', true], ['Player'], ['Rating', true], ['W', true], ['L', true], ['D', true]]);
+    r.data.forEach((p, i) => {
+      const tr = el('tr');
+      tr.appendChild(el('td', 'num', String(i + 1)));
+      tr.appendChild(el('td')).appendChild(profileLink(p.name));
+      for (const v of [Math.round(p.rating), p.w, p.l, p.d]) tr.appendChild(el('td', 'num', String(v)));
+      t.body.appendChild(tr);
+    });
+    box.appendChild(t.wrap);
+  }
+  function openProfileGame(g, who, ret) {
+    const hc = g.hostColor === 'b' ? 'b' : 'w', oc = other(g.color);
+    const seats = { [hc]: 'host', [other(hc)]: 'guest' };
+    const tc = timeControl(g.clock);
+    const opp = g.opponent && g.opponent.account ? g.opponent.name : 'guest';
+    show('game');
+    openReplay({ acts: replay(g.actions, seats, tc).acts, tc, names: { [g.color]: who, [oc]: opp }, ret });
+  }
+  async function renderProfile(who) {
+    const box = $('profileBody'), tok = ++viewToken, ret = location.hash;
+    box.textContent = '';
+    box.appendChild(el('p', 'emptyline', 'Loading\u2026'));
+    const r = await api('/api/profile/' + encodeURIComponent(who));
+    if (tok !== viewToken) return;
+    box.textContent = '';
+    if (r.status === 404) { box.appendChild(el('p', 'emptyline', 'No player with that name')); return; }
+    if (!r.ok || !r.data) { box.appendChild(el('p', 'emptyline', "Can't reach the server")); return; }
+    const d = r.data;
+    $('profileName').textContent = d.name;
+    const head = el('p', 'profilehead');
+    const stat = (k, v) => { const s = el('span', '', k + ' '); s.appendChild(el('b', '', String(v))); head.appendChild(s); };
+    stat('Rating', Math.round(d.rating)); stat('Won', d.w); stat('Lost', d.l); stat('Drawn', d.d);
+    box.appendChild(head);
+    const games = Array.isArray(d.games) ? d.games : [];
+    if (!games.length) { box.appendChild(el('p', 'emptyline', 'No games yet')); return; }
+    const t = statsTable([['Date'], ['Opponent'], ['Result'], ['Type'], ['Rating', true]]);
+    for (const g of games) {
+      const tr = el('tr', 'game');
+      const guest = !(g.opponent && g.opponent.account);
+      tr.appendChild(el('td', '', g.endedAt ? new Date(g.endedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''));
+      const oc = el('td', 'gname');
+      if (guest) oc.appendChild(el('span', '', 'guest'));
+      else oc.appendChild(profileLink(g.opponent.name));
+      tr.appendChild(oc);
+      const rc = el('td', g.result === 'win' ? 'win' : g.result === 'loss' ? 'loss' : '');
+      const rb = el('button', '', g.result === 'win' ? 'Win' : g.result === 'loss' ? 'Loss' : 'Draw');
+      rb.type = 'button';
+      rb.setAttribute('aria-label', rb.textContent + ' against ' + (guest ? 'a guest' : g.opponent.name) + ', open replay');
+      rb.addEventListener('click', () => openProfileGame(g, d.name, ret));
+      rc.appendChild(rb);
+      tr.appendChild(rc);
+      tr.appendChild(el('td', '', g.rated ? 'Rated' : 'Casual'));
+      const delta = Math.round(g.delta || 0);
+      tr.appendChild(el('td', 'num', g.rated ? Math.round(g.rating) + ' (' + (delta > 0 ? '+' : '') + delta + ')' : '\u2013'));
+      tr.addEventListener('click', e => { if (!e.target.closest('a, button')) openProfileGame(g, d.name, ret); });
+      t.body.appendChild(tr);
+    }
+    box.appendChild(t.wrap);
+  }
   function route() {
     const hash = location.hash, code = hash.slice(1).toUpperCase();
     if (hash.startsWith('#replay')) { show('game'); openReplay(parseReplay(hash)); return; }
@@ -2031,9 +2132,11 @@ a.btn { display: inline-block; text-decoration: none; }
       try { who = decodeURIComponent(arg); } catch (_) {}
       $('profileName').textContent = who;
       show('profile');
+      renderProfile(who);
       return;
     }
     if (name === 'login' || name === 'signup') { renderAuth(name); show(name); return; }
+    if (name === 'leaderboard') renderLeaderboard();
     show(['leaderboard', 'how', 'extras'].includes(name) ? name : 'home');
   }
 
