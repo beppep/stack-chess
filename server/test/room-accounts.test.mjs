@@ -103,3 +103,44 @@ test('logged-in players cannot rename themselves', async t => {
   assert.deepEqual(st.names, { host: 'Ann', guest: 'Ben' });
   a.c.close(); b.c.close();
 });
+
+test('a seat keeps its account when it reconnects without a session', async t => {
+  const { srv, tok, me, profile, room, join } = await setup();
+  t.after(() => srv.stop());
+  await room('KEEP01').init({ code: 'KEEP01', clock: '10+5', hostColor: 'w', host: 't1', guest: 't2', rated: true });
+  const a = await join('KEEP01', 't1', { session: tok.Ann });
+  const b = await join('KEEP01', 't2', { session: tok.Ben });
+  a.c.close();
+  const a2 = await join('KEEP01', 't1', { name: 'Ann' }); // back as a guest, no session
+  assert.equal(a2.st.accounts.host, 'Ann');
+  flag(a2.c, 1); // Ann is White and loses
+  await b.c.next('act');
+  await settle();
+  assert.equal((await me('Ann')).rating, 1180);
+  assert.equal((await profile('Ann')).games[0].rated, true);
+  a2.c.close(); b.c.close();
+});
+
+test('a failing report does not break the game and is retried on sync', async t => {
+  const { srv, tok, me, profile, join } = await setup();
+  t.after(() => srv.stop());
+  const a = await join('RETRY1', 't1', { session: tok.Ann, create: { clock: '10+5', color: 'w' } });
+  const b = await join('RETRY1', 't2', { session: tok.Ben });
+  const acc = srv.env.ACCOUNTS.get(srv.env.ACCOUNTS.idFromName('main'));
+  const real = acc.report.bind(acc);
+  let calls = 0;
+  acc.report = r => { if (calls++ === 0) throw new Error('down'); return real(r); };
+  flag(a.c, 1);
+  await b.c.next('act'); // gameplay went on
+  await settle();
+  assert.equal((await profile('Ann')).games.length, 0);
+  a.c.send({ type: 'sync' });
+  await a.c.next('state');
+  await settle();
+  a.c.send({ type: 'sync' });
+  await a.c.next('state');
+  await settle();
+  assert.equal((await profile('Ann')).games.length, 1);
+  assert.equal(calls, 2);
+  a.c.close(); b.c.close();
+});

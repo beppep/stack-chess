@@ -117,12 +117,18 @@ export class Room extends DurableObject {
     if (G.phase !== 'over' || (s.reported || 0) >= s.round) return;
     const seat = role => ({ key: s.accounts?.[role]?.key || null, name: s.names[role] || '' });
     const seats = { [s.hostColor]: seat('host'), [R.other(s.hostColor)]: seat('guest') };
-    s.reported = s.round;
+    const done = s.round;
+    s.reported = done;
     await this.save();
-    await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).report({
-      code: s.code, round: s.round, clock: s.clock, hostColor: s.hostColor, actions: s.actions, endedAt: Date.now(),
-      rated: !!s.rated, winner: G.result?.winner || null, seats
-    });
+    try {
+      await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).report({
+        code: s.code, round: done, clock: s.clock, hostColor: s.hostColor, actions: s.actions, endedAt: Date.now(),
+        rated: !!s.rated, winner: G.result?.winner || null, seats
+      });
+    } catch (_) {
+      s.reported = done - 1; // try again on the next hello or sync; report() ignores repeats
+      await this.save();
+    }
   }
   async flag(G) {
     const a = { t: 'flag', c: G.cur, by: G.cur === this.s.hostColor ? 'host' : 'guest' };
@@ -206,7 +212,8 @@ export class Room extends DurableObject {
         return;
       }
       case 'sync':
-        return resync();
+        await resync();
+        return this.reportRound();
     }
   }
 
@@ -223,11 +230,14 @@ export class Room extends DurableObject {
     if (!role && !s.guest) { s.guest = token; role = 'guest'; }
     role = role || 'watch';
     if (role !== 'watch') {
-      const who = typeof m.session === 'string' && m.session
-        ? await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).whoami(m.session.slice(0, 64)) : null;
       s.accounts = s.accounts || { host: null, guest: null };
-      s.accounts[role] = who ? { key: who.key, name: who.name } : null;
-      s.names[role] = who ? who.name : cleanName(m.name);
+      if (!s.accounts[role] && typeof m.session === 'string' && m.session) {
+        try {
+          const who = await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).whoami(m.session.slice(0, 64));
+          if (who) s.accounts[role] = { key: who.key, name: who.name }; // once bound, a seat keeps its account
+        } catch (_) {}
+      }
+      s.names[role] = s.accounts[role] ? s.accounts[role].name : cleanName(m.name);
       if (!s.joined[role]) {
         s.joined[role] = true;
         if (ready(s)) { s.turnStart = Date.now(); s.grace = LATENCY; } // both are here: White's clock starts
@@ -239,6 +249,7 @@ export class Room extends DurableObject {
     await this.save();
     await this.armClock();
     send(ws, await this.stateFor(me));
+    await this.reportRound();
     this.broadcast({ type: 'names', names: s.names }, ws);
     this.broadcast({ type: 'presence', ...this.presence() }, ws);
   }
