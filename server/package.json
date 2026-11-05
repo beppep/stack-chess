@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "stack-chess-server",
   "private": true,
   "scripts": {
@@ -10,4 +10,3 @@
     "wrangler": "^4.0.0"
   }
 }
-

@@ -1,16 +1,16 @@
-﻿// Runs the Stack Chess server code under Node, standing in for Cloudflare's Durable Objects
+// Runs the Stack Chess server code under Node, standing in for Cloudflare's Durable Objects
 // (workerd doesn't run on this PC). Every message and alarm wipes the object's in-memory
 // state, like hibernation, so the storage path is exercised.
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_DIR = join(HERE, '..');
-const BUNDLE_DIR = join(HERE, '.bundle');
+const BUNDLE_DIR = join(SERVER_DIR, '.bundle');
 const { WebSocketServer, WebSocket } = createRequire(join(SERVER_DIR, 'package.json'))('ws');
 const clone = v => (v === undefined ? v : structuredClone(v));
 
@@ -51,19 +51,22 @@ function makeNamespace(Cls, env) {
   };
 }
 
+// One build per process, to a file named by pid, so parallel test processes never share a file.
+let built;
 function bundle() {
+  if (built) return built;
   mkdirSync(BUNDLE_DIR, { recursive: true });
-  const out = join(BUNDLE_DIR, 'bundle.mjs');
-  execFileSync(join(SERVER_DIR, 'node_modules/@esbuild/win32-x64/esbuild.exe'),
-    ['src/index.js', '--bundle', '--format=esm', '--external:cloudflare:workers', '--outfile=' + out, '--log-level=warning'],
-    { cwd: SERVER_DIR, stdio: 'inherit' });
-  writeFileSync(out, readFileSync(out, 'utf8').replace('"cloudflare:workers"', '"./cfworkers.mjs"'));
-  writeFileSync(join(BUNDLE_DIR, 'cfworkers.mjs'), readFileSync(join(HERE, 'cfworkers.mjs')));
-  return out;
+  const code = execFileSync(join(SERVER_DIR, 'node_modules/@esbuild/win32-x64/esbuild.exe'),
+    ['src/index.js', '--bundle', '--format=esm', '--external:cloudflare:workers', '--log-level=warning'],
+    { cwd: SERVER_DIR, encoding: 'utf8', maxBuffer: 1 << 26, stdio: ['ignore', 'pipe', 'inherit'] });
+  built = join(BUNDLE_DIR, 'bundle-' + process.pid + '.mjs');
+  writeFileSync(built, code.replace('"cloudflare:workers"', JSON.stringify(pathToFileURL(join(HERE, 'cfworkers.mjs')).href)));
+  process.on('exit', () => { try { unlinkSync(built); } catch (_) {} });
+  return built;
 }
 
 export async function startServer({ port = 0 } = {}) {
-  const mod = await import(pathToFileURL(bundle()).href + '?t=' + Date.now());
+  const mod = await import(pathToFileURL(bundle()).href);
   const env = {};
   for (const [key, cls] of [['ROOM', 'Room'], ['LOBBY', 'Lobby'], ['ACCOUNTS', 'Accounts']]) if (mod[cls]) env[key] = makeNamespace(mod[cls], env);
 
