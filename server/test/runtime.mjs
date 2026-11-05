@@ -60,7 +60,7 @@ function bundle() {
     ['src/index.js', '--bundle', '--format=esm', '--external:cloudflare:workers', '--log-level=warning'],
     { cwd: SERVER_DIR, encoding: 'utf8', maxBuffer: 1 << 26, stdio: ['ignore', 'pipe', 'inherit'] });
   built = join(BUNDLE_DIR, 'bundle-' + process.pid + '.mjs');
-  writeFileSync(built, code.replace('"cloudflare:workers"', JSON.stringify(pathToFileURL(join(HERE, 'cfworkers.mjs')).href)));
+  writeFileSync(built, code.replaceAll('"cloudflare:workers"', JSON.stringify(pathToFileURL(join(HERE, 'cfworkers.mjs')).href)));
   process.on('exit', () => { try { unlinkSync(built); } catch (_) {} });
   return built;
 }

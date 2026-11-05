@@ -4,6 +4,9 @@
 // Both are WebSocket endpoints. The page sends JSON messages and gets JSON messages back.
 import { DurableObject } from 'cloudflare:workers';
 import '../../beta/rules.js';
+import { Accounts } from './accounts.js';
+
+export { Accounts };
 
 const R = globalThis.StackRules;
 const CODE = /^[A-Z0-9]{6}$/;
@@ -15,6 +18,7 @@ export default {
   async fetch(req, env) {
     const [, kind, raw] = new URL(req.url).pathname.split('/');
     const name = decodeURIComponent(raw || '');
+    if (kind === 'api') return env.ACCOUNTS.get(env.ACCOUNTS.idFromName('main')).fetch(req);
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('Stack Chess server\n');
     if (kind === 'room' && CODE.test(name)) return env.ROOM.get(env.ROOM.idFromName(name)).fetch(req);
     if (kind === 'lobby' && LOBBIES.includes(name)) return env.LOBBY.get(env.LOBBY.idFromName(name)).fetch(req);
