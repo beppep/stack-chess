@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, connect } from './runtime.mjs';
-import { request } from 'node:http';
 
 const quiet = (c, ms = 300) => c.next('matched', ms).then(() => false, () => true);
 
@@ -73,10 +72,7 @@ test('lobby: a searcher who cancels is not paired', async t => {
 test('lobby: other lobby names are 404', async t => {
   const srv = await startServer({ port: 0 });
   t.after(() => srv.stop());
-  const status = path => new Promise((res, rej) => {
-    const r = request(srv.http + path, { headers: { Connection: 'Upgrade', Upgrade: 'websocket' } }, x => res(x.statusCode));
-    r.on('upgrade', () => res(101)); r.on('error', rej); r.end();
-  });
-  assert.equal(await status('/lobby/3+2'), 404);
-  assert.equal(await status('/lobby/off'), 404);
+  const up = { Upgrade: 'websocket' };
+  assert.equal((await srv.worker('/lobby/3+2', up)).status, 404);
+  assert.equal((await srv.worker('/lobby/off', up)).status, 404);
 });

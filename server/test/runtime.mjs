@@ -103,6 +103,7 @@ export async function startServer({ port = 0 } = {}) {
   await new Promise(r => http.listen(port, '127.0.0.1', r));
   const p = http.address().port;
   return {
+    worker: (path, headers) => mod.default.fetch(new Request('http://x' + path, { headers }), env), // the worker's own routing
     http: 'http://127.0.0.1:' + p, ws: 'ws://127.0.0.1:' + p, env,
     stop: () => new Promise(r => {
       for (const ns of Object.values(env)) for (const o of ns.all()) o.stopAlarm();
