@@ -82,6 +82,7 @@ a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-rad
 .mode small { display: block; font-weight: 400; font-size: .9rem; opacity: .75; }
 .mode .ic { font-family: var(--font-glyph); font-size: 1.6rem; width: 1.6rem; text-align: center; font-weight: 400; }
 .online-count { color: var(--muted); font-size: .9rem; margin-top: -4px; }
+.online-count:empty { display: none; }
 .online-count:not(:empty)::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
 .deco .sq { cursor: default; }
 
@@ -378,6 +379,11 @@ a.btn { display: inline-block; text-decoration: none; }
 .gstatus { color: var(--muted); font-size: .85rem; }
 .seats li { display: flex; align-items: center; gap: 10px; min-height: 36px; }
 .seatname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seatname a { color: inherit; font-weight: 700; text-decoration: none; }
+.seatname a:hover { color: var(--amber); text-decoration: underline; }
+.guesttag { margin-left: 6px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: .72rem; font-weight: 400; vertical-align: 1px; }
+.ratedlabel { margin: -4px 0 10px; font-size: .8rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.ratedlabel.rated { color: var(--amber); }
 .seatname.muted { color: var(--muted); font-style: italic; }
 .chip.small { width: 26px; height: 26px; font-size: 18px; box-shadow: none; }
 .chip.small.w { box-shadow: 0 0 0 2px var(--amber); }
@@ -458,7 +464,7 @@ a.btn { display: inline-block; text-decoration: none; }
         <li><b>Responses</b> are chosen from the board as it is now, before anything on the stack happens.</li>
         <li><b>One move per piece.</b> A piece that already has a move on the stack can't be given another one until the stack resolves. Those pieces are dimmed.</li>
         <li><b>Clock (optional).</b> Pick a time control before starting a game. Your clock runs while it's your turn to move or respond, pauses while the stack resolves, and gains a few seconds after each move. Run out and you lose.</li>
-        <li><b>Online.</b> Create a game and send the invite link. No sign-in needed. Games are kept on the server, so you can reload or come back later from the same browser and keep your seat, and the clock keeps running while you are away. Anyone else who opens the link watches, and after the game the link shows every game played in it. Or press <i>Search for game</i> to be paired with someone else who is searching.</li>
+        <li><b>Online.</b> Press <i>Play online</i> to be paired with anyone else who is searching, for a game of 10 min + 5 s. It is rated when both players are logged in, and you can also play as a guest. For other clocks, use <i>New game</i> and send the invite link: those games are casual. Games are kept on the server, so you can reload or come back later from the same browser and keep your seat, and the clock keeps running while you are away. Anyone else who opens the link watches, and after the game the link shows every game played in it.</li>
         <li><b>Replays.</b> <i>Copy replay link</i> puts the whole game in a link. Anyone who opens it can step through the game with the arrow keys. Games you played or watched online can also be replayed from <i>Your recent games</i>.</li>
         <li><b>No check rules.</b> You may move into check, leave your king attacked, or castle through attacked squares. You win by capturing the king, and your opponent can respond to save it. There is no checkmate.</li>
       </ul>
@@ -799,6 +805,7 @@ a.btn { display: inline-block; text-decoration: none; }
     ws: null, open: false, ready: false, connected: false, // open: talking to the server; ready: both players have joined
     status: '', note: '', missing: false, create: null, retryTimer: null, gotState: false,
     online: {}, watchers: 0, chat: [],
+    rated: false, accounts: {},            // from the server: a Play online room, and each seat's account name (null = guest)
     watching: false,                       // this page is a spectator
     names: {},                             // display names by person: { host, guest }
     past: []                               // earlier games in this room: [{ hostColor, actions }]
@@ -851,6 +858,8 @@ a.btn { display: inline-block; text-decoration: none; }
   }
   const cleanName = n => (typeof n === 'string' ? n.trim().slice(0, 20) : '');
   const nameOfColor = c => NET.names[seatsOf()[c]] || '';
+  const cleanAccounts = a => ({ host: a && typeof a.host === 'string' ? a.host : null, guest: a && typeof a.guest === 'string' ? a.guest : null });
+  const isRated = () => NET.rated && !!NET.accounts.host && !!NET.accounts.guest;
   const cleanNames = n => (n && typeof n === 'object' ? { host: cleanName(n.host), guest: cleanName(n.guest) } : {});
   const seatsOf = () => ({ [NET.hostColor]: 'host', [other(NET.hostColor)]: 'guest' });
   const myColor = () => (NET.role === 'host' ? NET.hostColor : other(NET.hostColor));
@@ -860,7 +869,7 @@ a.btn { display: inline-block; text-decoration: none; }
     if (!NET.code || !NET.gotState) return;
     store.set('game-' + NET.code, {
       role: NET.watching ? 'watch' : NET.role, hostColor: NET.hostColor, round: NET.round, actions: NET.actions,
-      chat: NET.chat.slice(-100), names: NET.names, clock: NET.clock, past: NET.past, updatedAt: Date.now()
+      chat: NET.chat.slice(-100), names: NET.names, rated: NET.rated, accounts: NET.accounts, clock: NET.clock, past: NET.past, updatedAt: Date.now()
     });
     const recent = (store.get('recent') || []).filter(c => c !== NET.code);
     recent.unshift(NET.code);
@@ -963,6 +972,8 @@ a.btn { display: inline-block; text-decoration: none; }
     NET.role = NET.watching ? null : m.role;
     NET.round = m.round; NET.hostColor = m.hostColor; NET.clock = tc;
     NET.names = cleanNames(m.names);
+    NET.rated = m.rated === true;
+    NET.accounts = cleanAccounts(m.accounts);
     NET.past = Array.isArray(m.past) ? m.past : [];
     if (Array.isArray(m.chat)) NET.chat = m.chat.filter(c => c && typeof c.text === 'string');
     setPresence(m);
@@ -1007,6 +1018,8 @@ a.btn { display: inline-block; text-decoration: none; }
         NET.names = cleanNames(m.names);
         saveNet();
         renderAll();
+        // A player joined or renamed; a Play online room needs the server's account names to show Rated.
+        if (NET.rated && !isRated()) send({ type: 'sync' });
         break;
       case 'presence':
         setPresence(m);
@@ -1062,42 +1075,63 @@ a.btn { display: inline-block; text-decoration: none; }
 
   function orient() { V.flipped = !NET.watching && !!NET.role && myColor() === 'b'; }
 
-  // ---------- Matchmaking: "Search for game" ----------
-  // The server keeps one waiting list per clock setting. The next person searching with the
-  // same clock is paired with you, and both pages are sent the code of a new game.
-  const MM = { ws: null, searching: false, timer: null, status: '' };
-  function stopSearch() {
-    MM.searching = false;
-    clearTimeout(MM.timer);
-    const ws = MM.ws;
-    MM.ws = null;
-    if (ws) { try { ws.close(); } catch (_) {} }
+  // ---------- Lobby: online count and "Play online" matchmaking ----------
+  // Every page keeps one lobby socket open. The server sends how many pages are connected and, while
+  // we are searching, the code of the game once someone else is searching too (a rated 10+5 room).
+  const LOBBY = { ws: null, count: null, searching: false, status: '', timer: null };
+  function renderCount() {
+    const n = LOBBY.count;
+    $('onlineCount').textContent = n ? n + (n === 1 ? ' player online' : ' players online') : '';
   }
-  function searchGame() {
-    stopSearch();
-    MM.searching = true;
-    MM.status = 'Searching for an opponent…';
-    const ws = new WebSocket(SERVER + '/lobby/' + encodeURIComponent(clockSel.value));
-    MM.ws = ws;
+  function lobbySend(msg) {
+    if (LOBBY.ws && LOBBY.ws.readyState === 1) { try { LOBBY.ws.send(JSON.stringify(msg)); } catch (_) {} return true; }
+    return false;
+  }
+  function lobbyConnect() {
+    clearTimeout(LOBBY.timer);
+    const ws = new WebSocket(SERVER + '/lobby/play');
+    LOBBY.ws = ws;
     ws.onopen = () => {
-      if (ws !== MM.ws) return;
-      ws.send(JSON.stringify({ type: 'search', token: ME }));
-      MM.status = 'Waiting for an opponent. Keep this page open.';
-      renderOnline();
+      if (ws !== LOBBY.ws) return;
+      if (LOBBY.searching) { lobbySearch(); renderOnline(); }
     };
     ws.onmessage = e => {
-      if (ws !== MM.ws) return;
+      if (ws !== LOBBY.ws) return;
       let m;
       try { m = JSON.parse(e.data); } catch (_) { return; }
-      if (m && m.type === 'matched' && /^[A-Z0-9]{6}$/.test(m.code)) { stopSearch(); openGame(m.code); }
+      if (!m || typeof m !== 'object') return;
+      if (m.type === 'count' && typeof m.n === 'number') { LOBBY.count = m.n; renderCount(); }
+      else if (m.type === 'matched' && LOBBY.searching && /^[A-Z0-9]{6}$/.test(m.code)) {
+        LOBBY.searching = false; LOBBY.status = '';
+        go('#' + m.code);
+      }
     };
     ws.onclose = () => {
-      if (ws !== MM.ws) return;
-      MM.ws = null;
-      MM.status = 'Cannot reach the game server. Retrying…';
+      if (ws !== LOBBY.ws) return;
+      LOBBY.ws = null; LOBBY.count = null;
+      if (LOBBY.searching) LOBBY.status = 'Cannot reach the game server. Retrying…';
+      renderCount();
       renderOnline();
-      MM.timer = setTimeout(() => { if (MM.searching) searchGame(); }, 3000);
+      LOBBY.timer = setTimeout(lobbyConnect, 3000);
     };
+  }
+  function lobbySearch() {
+    LOBBY.status = 'Searching… (10 min + 5 s)';
+    lobbySend({ type: 'search', token: ME, session: ACCT ? ACCT.token : undefined });
+  }
+  function stopSearch() {
+    if (!LOBBY.searching) return;
+    LOBBY.searching = false; LOBBY.status = '';
+    lobbySend({ type: 'cancel' });
+  }
+  // Play online: show the online panel, leave any open game, and queue for a 10 min + 5 s game.
+  function playOnline() {
+    if (V.busy || LOBBY.searching) return;
+    if (NET.code) leaveGame();
+    go('#/online');
+    LOBBY.searching = true;
+    if (LOBBY.ws && LOBBY.ws.readyState === 1) lobbySearch();
+    else LOBBY.status = 'Cannot reach the game server. Retrying…';
     renderOnline();
   }
 
@@ -1118,6 +1152,7 @@ a.btn { display: inline-block; text-decoration: none; }
     NET.clock = create ? chosenTC() : saved ? timeControl(saved.clock && saved.clock.key) : null;
     NET.chat = saved && Array.isArray(saved.chat) ? saved.chat : [];
     NET.names = saved ? cleanNames(saved.names) : {};
+    NET.rated = !!saved && saved.rated === true; NET.accounts = cleanAccounts(saved && saved.accounts);
     NET.past = saved && Array.isArray(saved.past) ? saved.past : [];
     NET.ready = false; NET.online = {}; NET.watchers = 0;
     if (NET.role === 'host') NET.names.host = myName;
@@ -1146,6 +1181,7 @@ a.btn { display: inline-block; text-decoration: none; }
   function setMode(mode) {
     if (V.busy || V.mode === mode) return;
     V.mode = mode;
+    if (mode !== 'online') stopSearch();
     clearSel();
     if (mode === 'cpu') V.flipped = CPU.color === 'w';
     if (mode === 'online' && NET.code) orient();
@@ -1260,7 +1296,7 @@ a.btn { display: inline-block; text-decoration: none; }
     if (lastEval !== null) drawEval(lastEval);
     alignStack();
     // keep the online panel in step with anything it shows
-    const panelKey = JSON.stringify([V.mode, NET.code, NET.role, NET.connected, NET.watching, NET.watchers, NET.round, NET.G.phase, NET.names, NET.status, NET.ready, NET.online]);
+    const panelKey = JSON.stringify([V.mode, NET.code, NET.role, NET.connected, NET.watching, NET.watchers, NET.round, NET.G.phase, NET.names, NET.status, NET.ready, NET.online, NET.rated, NET.accounts, LOBBY.searching, LOBBY.status]);
     if (panelKey !== lastPanelKey) { lastPanelKey = panelKey; renderOnline(); }
   }
 
@@ -1460,6 +1496,22 @@ a.btn { display: inline-block; text-decoration: none; }
     return row;
   }
 
+  // A seat's name: an account name links to its profile; anyone else is a guest and carries a small tag.
+  function seatName(seat, suffix, fallback) {
+    const span = el('span', 'seatname');
+    const acct = NET.accounts[seat];
+    if (acct) {
+      const a = el('a', '', acct);
+      a.href = '#/u/' + encodeURIComponent(acct);
+      span.append(a);
+    } else {
+      span.append(NET.names[seat] || fallback);
+      if (NET.names[seat] || NET.ready) span.append(el('span', 'guesttag', 'guest'));
+    }
+    span.append(' ' + suffix);
+    return span;
+  }
+
   function renderOnline() {
     if (V.mode !== 'online') return;
     if (document.activeElement === nameInput) return; // don't redraw under someone who is typing their name
@@ -1470,8 +1522,13 @@ a.btn { display: inline-block; text-decoration: none; }
     if (!NET.code) {
       frag.appendChild(el('h2', '', 'Online'));
       frag.appendChild(nameRow('Your name'));
-      note(ACCT ? 'You are logged in, so your username is your name.' : 'No sign-in needed. Games are kept on the server, so you can reload or come back later from this browser.');
-      frag.appendChild(el('p', 'label', 'New game, you play'));
+      note(ACCT ? 'You are logged in, so your username is your name.' : 'You can play as a guest. Log in to play rated games.');
+      const mmRow = el('div', 'btnrow');
+      mmRow.appendChild(button('Play online', 'primary', playOnline));
+      if (LOBBY.searching) mmRow.appendChild(button('Cancel', '', () => { stopSearch(); renderOnline(); }));
+      frag.appendChild(mmRow);
+      note(LOBBY.searching ? LOBBY.status : 'Pairs you with anyone searching, 10 min + 5 s. Rated when both players are logged in.');
+      frag.appendChild(el('p', 'label', 'New game, you play (casual)'));
       const row = el('div', 'btnrow');
       for (const [c, t] of [['w', 'White'], ['b', 'Black'], ['random', 'Random']]) {
         row.appendChild(button(t, '', () => {
@@ -1480,12 +1537,6 @@ a.btn { display: inline-block; text-decoration: none; }
         }));
       }
       frag.appendChild(row);
-      frag.appendChild(el('p', 'label', 'Random opponent'));
-      const mmRow = el('div', 'btnrow');
-      if (MM.searching) mmRow.appendChild(button('Cancel search', '', () => { stopSearch(); renderOnline(); }));
-      else mmRow.appendChild(button('Search for game', 'primary', searchGame));
-      frag.appendChild(mmRow);
-      note(MM.searching ? MM.status : `Matches you with someone else who is searching with the same clock (${clockSel.options[clockSel.selectedIndex].text}).`);
       const form = el('form', 'joinrow');
       form.innerHTML = '<label for="codeInput" class="label">Join with a code</label><div class="btnrow"><input id="codeInput" autocomplete="off" spellcheck="false" maxlength="6" placeholder="K7QF2M"><button class="btn small" type="submit">Join</button></div>';
       form.addEventListener('submit', e => {
@@ -1523,12 +1574,13 @@ a.btn { display: inline-block; text-decoration: none; }
       }
     } else {
       frag.appendChild(el('h2', '', 'Game ' + NET.code));
+      frag.appendChild(el('p', 'ratedlabel' + (isRated() ? ' rated' : ''), isRated() ? 'Rated' : 'Casual'));
       if (NET.watching) {
         const ul = el('ul', 'seats');
         for (const c of ['w', 'b']) {
           const li = el('li');
           li.innerHTML = `<span class="chip ${c} small">${GLYPH.k}\uFE0E</span>`;
-          li.appendChild(el('span', 'seatname', `${nameOfColor(c) || 'Player'} (${NAME[c]})`));
+          li.appendChild(seatName(seatsOf()[c], `(${NAME[c]})`, 'Player'));
           ul.appendChild(li);
         }
         frag.appendChild(ul);
@@ -1541,10 +1593,10 @@ a.btn { display: inline-block; text-decoration: none; }
           const li = el('li');
           li.innerHTML = `<span class="chip ${c} small">${GLYPH.k}︎</span>`;
           if (c === mine) {
-            li.append(ACCT ? el('span', 'myname', ACCT.name) : nameInput, el('span', 'seatname', `(${NAME[c]}, you)`));
+            li.append(ACCT ? el('span', 'myname', ACCT.name) : nameInput, ...(ACCT ? [] : [el('span', 'guesttag', 'guest')]), el('span', 'seatname', `(${NAME[c]}, you)`));
           } else {
             const state = NET.online[NET.role === 'host' ? 'guest' : 'host'] ? ' · online' : (NET.ready ? ' · offline' : ' · not joined yet');
-            li.appendChild(el('span', 'seatname', `${nameOfColor(c) || 'Opponent'} (${NAME[c]})${state}`));
+            li.appendChild(seatName(seatsOf()[c], `(${NAME[c]})${state}`, 'Opponent'));
           }
           ul.appendChild(li);
         }
@@ -1868,7 +1920,6 @@ a.btn { display: inline-block; text-decoration: none; }
     // A game that hasn't started yet switches right away; otherwise it applies to the next game.
     if (!LG.log.length) LG = freshGame(chosenTC());
     if (!CG.log.length && !CPU.thinking) { CG = freshGame(chosenTC()); cpuTurn(); }
-    if (MM.searching) searchGame(); // search among players with the new clock
     render();
     renderOnline();
   });
@@ -1952,6 +2003,7 @@ a.btn { display: inline-block; text-decoration: none; }
   function show(v) {
     if (v !== view) window.scrollTo(0, 0);
     view = v;
+    if (v !== 'game') stopSearch();
     document.querySelectorAll('.view').forEach(e => { e.hidden = e.id !== 'view-' + v; });
     document.querySelectorAll('.nav a').forEach(a => {
       if (a.dataset.view === v) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -2050,6 +2102,7 @@ a.btn { display: inline-block; text-decoration: none; }
     return mode === 'online' && NET.code ? '#' + NET.code : '#/' + (mode === 'cpu' ? 'computer' : mode);
   }
   window.addEventListener('hashchange', route);
+  $('playOnline').addEventListener('click', e => { e.preventDefault(); playOnline(); });
 
   // The home page's board: a position with one move on the stack for each side.
   ['rnbqkbnr', 'pppp.ppp', '........', '....p...', '..B.P...', '........', 'PPPP.PPP', 'RNBQK.NR'].forEach((row, r) => [...row].forEach((ch, c) => {
@@ -2060,6 +2113,7 @@ a.btn { display: inline-block; text-decoration: none; }
 
   // ---------- Boot ----------
   route();
+  lobbyConnect();
   renderAccount();
   renderAll();
   // A saved login is checked once: a 401 means it ended, no answer (offline) keeps it.
