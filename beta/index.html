@@ -63,7 +63,10 @@ body {
 .nav a { color: var(--muted); font-weight: 700; text-decoration: none; }
 .nav a:hover, .nav a[aria-current="page"] { color: var(--fg); }
 .nav a[aria-current="page"] { box-shadow: 0 2px 0 var(--amber); }
-.account { display: flex; gap: 8px; }
+.account { display: flex; align-items: center; gap: 8px; }
+.account .who { color: var(--fg); font-weight: 700; text-decoration: none; overflow-wrap: anywhere; }
+.account .who:hover { color: var(--amber); }
+.account .who small { color: var(--muted); font-weight: 400; }
 @media (max-width: 640px) { .nav { order: 3; width: 100%; } }
 a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-radius: 4px; }
 
@@ -297,6 +300,22 @@ a.btn { display: inline-block; text-decoration: none; }
 .cpu .hint { margin: 0; }
 .cpu .label { margin: 4px 0 -4px; font-size: .78rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
 
+/* Log in / sign up */
+.authform { max-width: 380px; display: flex; flex-direction: column; gap: 10px; }
+.authform label { font-size: .78rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.authform input {
+  font-family: var(--font-body); font-size: 1rem; color: var(--fg); width: 100%; min-width: 0;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px;
+}
+.authform input:focus-visible { outline: 2px solid var(--sel); outline-offset: 1px; }
+.authform .err { margin: 0; color: var(--amber); font-size: .95rem; }
+.authform .err:empty { display: none; }
+.authform .alt { margin: 4px 0 0; }
+.authform .alt a { color: var(--amber); font-weight: 700; }
+.authform .btn { align-self: flex-start; }
+.page .hintline { font-size: .9rem; margin: -4px 0 0; }
+.myname { font-weight: 700; overflow-wrap: anywhere; }
+
 /* Name box */
 .online input.nameinput { flex: 0 1 11rem; font-family: var(--font-body); font-weight: 700; font-size: .95rem; letter-spacing: 0; text-transform: none; }
 
@@ -420,8 +439,8 @@ a.btn { display: inline-block; text-decoration: none; }
 
   <main class="page view" id="view-leaderboard" hidden><h1>Leaderboard</h1></main>
   <main class="page view" id="view-profile" hidden><h1 id="profileName"></h1></main>
-  <main class="page view" id="view-login" hidden><h1>Log in</h1></main>
-  <main class="page view" id="view-signup" hidden><h1>Sign up</h1></main>
+  <main class="page view" id="view-login" hidden><h1>Log in</h1><div id="loginBody"></div></main>
+  <main class="page view" id="view-signup" hidden><h1>Sign up</h1><div id="signupBody"></div></main>
   <main class="page view" id="view-extras" hidden>
     <h1>Extras</h1>
     <p>Puzzles — coming soon.</p>
@@ -792,7 +811,44 @@ a.btn { display: inline-block; text-decoration: none; }
   const randomToken = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
   const ME = store.get('me') || randomToken();
   store.set('me', ME);
-  let myName = String(store.get('name') || '').slice(0, 20);
+  const guestName = () => String(store.get('name') || '').slice(0, 20);
+  let myName = guestName();
+
+  // ---------- Accounts ----------
+  // A logged-in player's session token is kept here and sent to the server as a Bearer header
+  // (and in the room hello), never in a URL. Their in-game name is their username.
+  const API = SERVER.replace(/^ws/, 'http');
+  let ACCT = null;
+  {
+    const a = store.get('session');
+    if (a && typeof a.token === 'string' && typeof a.name === 'string') ACCT = { token: a.token, name: a.name, rating: a.rating };
+  }
+  if (ACCT) myName = ACCT.name;
+  async function api(path, opts) {
+    const o = opts || {};
+    const headers = {};
+    if (o.body !== undefined) headers['Content-Type'] = 'application/json';
+    if (o.auth && ACCT) headers.Authorization = 'Bearer ' + ACCT.token;
+    try {
+      const r = await fetch(API + path, { method: o.method || 'GET', headers, body: o.body !== undefined ? JSON.stringify(o.body) : undefined });
+      let data = {};
+      try { data = await r.json(); } catch (_) {}
+      return { ok: r.ok, status: r.status, data };
+    } catch (_) {
+      return { ok: false, status: 0, data: {} };
+    }
+  }
+  // Change who is logged in (null for nobody): save it, fix the name, redraw, and rejoin any open game as that person.
+  function setAcct(a) {
+    ACCT = a;
+    store.set('session', a);
+    myName = a ? a.name : guestName();
+    nameInput.value = myName;
+    if (NET.code && NET.role && !NET.watching) NET.names[NET.role] = myName;
+    renderAccount();
+    renderAll();
+    if (NET.code && NET.ws) { const w = NET.ws; NET.ws = null; NET.open = false; try { w.close(); } catch (_) {} connect(); }
+  }
   const cleanName = n => (typeof n === 'string' ? n.trim().slice(0, 20) : '');
   const nameOfColor = c => NET.names[seatsOf()[c]] || '';
   const cleanNames = n => (n && typeof n === 'object' ? { host: cleanName(n.host), guest: cleanName(n.guest) } : {});
@@ -971,7 +1027,7 @@ a.btn { display: inline-block; text-decoration: none; }
     ws.onopen = () => {
       if (ws !== NET.ws) return;
       NET.open = true;
-      ws.send(JSON.stringify({ type: 'hello', token: ME, name: myName, create: NET.create || undefined }));
+      ws.send(JSON.stringify({ type: 'hello', token: ME, name: myName, session: ACCT ? ACCT.token : undefined, create: NET.create || undefined }));
     };
     ws.onmessage = e => {
       if (ws !== NET.ws) return;
@@ -1395,6 +1451,15 @@ a.btn { display: inline-block; text-decoration: none; }
   });
   nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') nameInput.blur(); });
 
+  // The name box: guests type any name; a logged-in player's name is their username and is plain text.
+  function nameRow(labelText) {
+    const row = el('div', 'btnrow');
+    const label = el('label', 'label', labelText);
+    if (ACCT) row.append(label, el('span', 'myname', ACCT.name));
+    else { label.htmlFor = 'nameInput'; row.append(label, nameInput); }
+    return row;
+  }
+
   function renderOnline() {
     if (V.mode !== 'online') return;
     if (document.activeElement === nameInput) return; // don't redraw under someone who is typing their name
@@ -1404,10 +1469,8 @@ a.btn { display: inline-block; text-decoration: none; }
 
     if (!NET.code) {
       frag.appendChild(el('h2', '', 'Online'));
-      const nameRow = el('div', 'btnrow');
-      nameRow.append(Object.assign(el('label', 'label', 'Your name'), { htmlFor: 'nameInput' }), nameInput);
-      frag.appendChild(nameRow);
-      note('No sign-in needed. Games are kept on the server, so you can reload or come back later from this browser.');
+      frag.appendChild(nameRow('Your name'));
+      note(ACCT ? 'You are logged in, so your username is your name.' : 'No sign-in needed. Games are kept on the server, so you can reload or come back later from this browser.');
       frag.appendChild(el('p', 'label', 'New game, you play'));
       const row = el('div', 'btnrow');
       for (const [c, t] of [['w', 'White'], ['b', 'Black'], ['random', 'Random']]) {
@@ -1470,9 +1533,7 @@ a.btn { display: inline-block; text-decoration: none; }
         }
         frag.appendChild(ul);
         note('You are watching. Both seats are taken.');
-        const nameRow = el('div', 'btnrow');
-        nameRow.append(Object.assign(el('label', 'label', 'Your name in chat'), { htmlFor: 'nameInput' }), nameInput);
-        frag.appendChild(nameRow);
+        frag.appendChild(nameRow('Your name in chat'));
       } else if (NET.role) {
         const ul = el('ul', 'seats');
         const mine = myColor();
@@ -1480,7 +1541,7 @@ a.btn { display: inline-block; text-decoration: none; }
           const li = el('li');
           li.innerHTML = `<span class="chip ${c} small">${GLYPH.k}︎</span>`;
           if (c === mine) {
-            li.append(nameInput, el('span', 'seatname', `(${NAME[c]}, you)`));
+            li.append(ACCT ? el('span', 'myname', ACCT.name) : nameInput, el('span', 'seatname', `(${NAME[c]}, you)`));
           } else {
             const state = NET.online[NET.role === 'host' ? 'guest' : 'host'] ? ' · online' : (NET.ready ? ' · offline' : ' · not joined yet');
             li.appendChild(el('span', 'seatname', `${nameOfColor(c) || 'Opponent'} (${NAME[c]})${state}`));
@@ -1887,7 +1948,7 @@ a.btn { display: inline-block; text-decoration: none; }
   // One view at a time, picked from the hash. View routes start with #/ so they never look like
   // a game code (#K7QF2M) or a replay (#replay…), which both open the game view as before.
   const MODE_ROUTE = { local: 'local', computer: 'cpu', online: 'online' };
-  let view = '';
+  let view = '', lastHash = '';
   function show(v) {
     if (v !== view) window.scrollTo(0, 0);
     view = v;
@@ -1904,7 +1965,9 @@ a.btn { display: inline-block; text-decoration: none; }
       if (code !== NET.code && !V.busy) openGame(code);
       return;
     }
-    const [name, arg] = hash.replace(/^#\/?/, '').split('/');
+    if (!/^#\/[^/]/.test(hash)) { show('home'); return; } // view routes need the #/ prefix
+    const [name, arg] = hash.slice(2).split('/');
+    if (name !== 'login' && name !== 'signup') lastHash = hash;
     if (MODE_ROUTE[name]) {
       show('game'); setMode(MODE_ROUTE[name]);
       // An open online game keeps its own link.
@@ -1918,7 +1981,66 @@ a.btn { display: inline-block; text-decoration: none; }
       show('profile');
       return;
     }
-    show(['leaderboard', 'how', 'extras', 'login', 'signup'].includes(name) ? name : 'home');
+    if (name === 'login' || name === 'signup') { renderAuth(name); show(name); return; }
+    show(['leaderboard', 'how', 'extras'].includes(name) ? name : 'home');
+  }
+
+  // Header: Log in / Sign up, or "name (rating)" and Log out.
+  function renderAccount() {
+    const box = $('account');
+    box.textContent = '';
+    if (ACCT) {
+      const who = el('a', 'who', ACCT.name);
+      who.href = '#/u/' + encodeURIComponent(ACCT.name);
+      if (typeof ACCT.rating === 'number') who.append(' ', el('small', '', '(' + Math.round(ACCT.rating) + ')'));
+      const out = el('button', 'btn small ghost', 'Log out');
+      out.type = 'button';
+      out.addEventListener('click', async () => {
+        const token = ACCT && ACCT.token;
+        setAcct(null);
+        if (token) { try { await fetch(API + '/api/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + token } }); } catch (_) {} }
+      });
+      box.append(who, out);
+    } else {
+      const a = el('a', 'btn small ghost', 'Log in'); a.href = '#/login';
+      const b = el('a', 'btn small primary', 'Sign up'); b.href = '#/signup';
+      box.append(a, b);
+    }
+  }
+
+  // The log in and sign up forms. Success keeps the account and goes back to where you were.
+  function renderAuth(kind) {
+    const box = $(kind + 'Body');
+    if (box.firstChild) { box.querySelectorAll('input').forEach(i => { i.value = ''; }); box.querySelector('.err').textContent = ''; return; }
+    const signup = kind === 'signup';
+    const form = el('form', 'panel authform');
+    form.noValidate = true;
+    form.innerHTML = `<label for="${kind}Name">Username</label>
+      <input id="${kind}Name" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" required>
+      ${signup ? '<p class="hintline">3 to 20 letters, digits, _ or -</p>' : ''}
+      <label for="${kind}Pass">Password</label>
+      <input id="${kind}Pass" name="password" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" maxlength="200" required>
+      ${signup ? '<p class="hintline">At least 6 characters</p>' : ''}
+      <p class="err" role="alert"></p>
+      <button class="btn primary" type="submit">${signup ? 'Sign up' : 'Log in'}</button>
+      <p class="alt">${signup ? 'Already have an account? <a href="#/login">Log in</a>' : 'New here? <a href="#/signup">Sign up</a>'}</p>`;
+    const err = form.querySelector('.err'), btn = form.querySelector('button');
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      if (btn.disabled) return;
+      const name = form.querySelector('input[name=username]').value.trim(), password = form.querySelector('input[name=password]').value;
+      if (!name || !password) { err.textContent = 'Enter a username and password.'; return; }
+      btn.disabled = true; err.textContent = '';
+      const r = await api('/api/' + kind, { method: 'POST', body: { name, password } });
+      btn.disabled = false;
+      if (r.ok && r.data && r.data.token) {
+        form.querySelector('input[name=password]').value = '';
+        setAcct({ token: r.data.token, name: r.data.name, rating: r.data.rating });
+        go(lastHash || '#/');
+      } else if (r.status === 0) err.textContent = 'Cannot reach the server. Try again in a moment.';
+      else err.textContent = (r.data && r.data.error) || 'Something went wrong. Try again.';
+    });
+    box.appendChild(form);
   }
   // Go to a route; going to the one we're already on still re-runs it.
   function go(hash) {
@@ -1938,7 +2060,17 @@ a.btn { display: inline-block; text-decoration: none; }
 
   // ---------- Boot ----------
   route();
+  renderAccount();
   renderAll();
+  // A saved login is checked once: a 401 means it ended, no answer (offline) keeps it.
+  if (ACCT) {
+    const token = ACCT.token;
+    api('/api/me', { auth: true }).then(r => {
+      if (!ACCT || ACCT.token !== token) return;
+      if (r.status === 401) setAcct(null);
+      else if (r.ok && r.data && typeof r.data.rating === 'number') { ACCT.rating = r.data.rating; store.set('session', ACCT); renderAccount(); }
+    });
+  }
 })();
 </script>
 
