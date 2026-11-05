@@ -2170,6 +2170,7 @@ a.btn { display: inline-block; text-decoration: none; }
     const box = $('account');
     box.textContent = '';
     document.body.classList.toggle('logged-in', !!ACCT);
+    document.querySelector('.btn.mode.how').classList.toggle('primary', !ACCT); // orange for newcomers
     if (ACCT) {
       const who = el('a', 'who', ACCT.name);
       who.href = '#/u/' + encodeURIComponent(ACCT.name);
