@@ -32,12 +32,6 @@ const parse = data => {
   try { const m = JSON.parse(data); return m && typeof m === 'object' ? m : null; } catch (_) { return null; }
 };
 const cleanName = n => (typeof n === 'string' ? n.trim().slice(0, 20) : '');
-const randomCode = () => {
-  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let s = '';
-  for (let i = 0; i < 6; i++) s += A[Math.floor(Math.random() * A.length)];
-  return s;
-};
 function accept(ctx, attachment) {
   const pair = new WebSocketPair();
   ctx.acceptWebSocket(pair[1]);
@@ -136,7 +130,7 @@ export class Room extends DurableObject {
     await this.record(a, 0, null);
   }
 
-  // Called by the Lobby when two searchers are paired. Returns false if the code is already used.
+  // Makes a room with both seats set. Returns false if the code is already used.
   async init({ code, clock, hostColor, host, guest, rated }) {
     if (await this.load()) return false;
     this.s = newRoom(code, clock, hostColor, host, guest, rated);
@@ -222,7 +216,7 @@ export class Room extends DurableObject {
     if (!token) return;
     let s = this.s;
     if (m.create && typeof m.create === 'object') {
-      if (!s) s = this.s = newRoom(me.code, m.create.clock, m.create.color, token, null);
+      if (!s) s = this.s = newRoom(me.code, m.create.clock, m.create.color, token, null, !!m.create.rated && !!R.TIME_CONTROLS[m.create.clock]);
       else if (s.host !== token) return send(ws, { type: 'taken' });
     }
     if (!s) return send(ws, { type: 'missing' });
@@ -275,51 +269,41 @@ export class Room extends DurableObject {
 // The one lobby ("Play online"). Every open page stays connected so everyone can see how many are online.
 // Pages that press search wait here; the next searcher with a different token and account is paired
 // with them into a new rated 10+5 room with a random color, and both are sent its code.
+// Every open page stays connected here: it shows how many are online and which rooms wait for a
+// second player. A waiting room lives on its host's connection, so it goes away when someone joins
+// it or the host leaves or closes the page.
 export class Lobby extends DurableObject {
   async fetch() {
     const res = accept(this.ctx, {});
-    this.count();
+    this.update();
     return res;
   }
-  count(closing) {
+  update(closing) {
     const open = this.ctx.getWebSockets().filter(o => o !== closing);
-    for (const o of open) send(o, { type: 'count', n: open.length });
+    const rooms = open.map(o => (o.deserializeAttachment() || {}).room).filter(Boolean).sort((a, b) => a.at - b.at).slice(0, 50);
+    for (const o of open) { send(o, { type: 'count', n: open.length }); send(o, { type: 'rooms', rooms }); }
   }
   async webSocketMessage(ws, data) {
     const m = parse(data);
     if (!m) return;
-    const gen = ((ws.deserializeAttachment() || {}).gen || 0) + 1; // any search or cancel bumps it, so a stale search can tell
-    if (m.type === 'cancel') return ws.serializeAttachment({ gen });
-    if (m.type !== 'search' || typeof m.token !== 'string') return;
-    ws.serializeAttachment({ gen }); // not a searcher until whoami is back
-    const token = m.token.slice(0, 64);
-    let key = null;
-    if (typeof m.session === 'string' && m.session) {
-      try { key = (await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).whoami(m.session.slice(0, 64)))?.key || null; } catch (_) {}
-    }
-    if ((ws.deserializeAttachment() || {}).gen !== gen) return; // cancelled or searched again meanwhile
-    const mine = { token, key, at: Date.now(), gen };
-    const waiting = this.ctx.getWebSockets().filter(o => o !== ws).map(o => ({ o, a: o.deserializeAttachment() || {} }))
-      .filter(({ a }) => a.token && a.token !== token && (!a.key || !key || a.key !== key))
-      .sort((x, y) => x.a.at - y.a.at)[0];
-    if (!waiting) return ws.serializeAttachment(mine);
-    // Claim both right now (no await since picking), so nobody else can pair with either while the room is made.
-    const claimed = { o: waiting.o, gen: waiting.a.gen + 1 };
-    waiting.o.serializeAttachment({ gen: claimed.gen });
+    const gen = ((ws.deserializeAttachment() || {}).gen || 0) + 1; // every message bumps it, so a stale host message can tell
     ws.serializeAttachment({ gen });
-    for (let i = 0; i < 5; i++) {
-      const code = randomCode();
-      const hostColor = Math.random() < 0.5 ? 'w' : 'b';
-      const ok = await this.env.ROOM.get(this.env.ROOM.idFromName(code)).init({ code, clock: '10+5', hostColor, host: waiting.a.token, guest: token, rated: true });
-      if (ok) { for (const o of [waiting.o, ws]) send(o, { type: 'matched', code }); return; }
+    if (m.type === 'unhost') return this.update();
+    if (m.type !== 'host' || typeof m.code !== 'string' || !CODE.test(m.code)) return;
+    let acct = null;
+    if (typeof m.session === 'string' && m.session) {
+      try { acct = await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).whoami(m.session.slice(0, 64)); } catch (_) {}
     }
-    // No room could be made: both go back to searching, unless they cancelled or searched again meanwhile.
-    if ((waiting.o.deserializeAttachment() || {}).gen === claimed.gen) waiting.o.serializeAttachment({ ...waiting.a, gen: claimed.gen });
-    if ((ws.deserializeAttachment() || {}).gen === gen) ws.serializeAttachment(mine);
+    if ((ws.deserializeAttachment() || {}).gen !== gen) return; // unhosted or hosted again meanwhile
+    ws.serializeAttachment({ gen, room: {
+      code: m.code, name: acct ? acct.name : cleanName(m.name), account: !!acct, rating: acct ? acct.rating : null,
+      clock: R.TIME_CONTROLS[m.clock] ? m.clock : null, color: m.color === 'b' ? 'b' : 'w', at: Date.now()
+    } });
+    this.update();
   }
   async webSocketClose(ws, code) {
     try { ws.close(code === 1005 ? 1000 : code); } catch (_) {}
-    this.count(ws);
+    this.update(ws);
   }
   async webSocketError(ws) { return this.webSocketClose(ws, 1011); }
 }

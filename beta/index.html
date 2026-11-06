@@ -451,7 +451,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         <a class="btn mode how" href="#/how"><span class="ic">?</span><span>How to play<small>The stack in two minutes</small></span></a>
         <a class="btn primary mode" href="#/local"><span class="ic">♟︎</span><span>Local versus<small>Two players, one screen</small></span></a>
         <a class="btn primary mode" href="#/computer"><span class="ic">♞︎</span><span>Vs computer<small>Easy, normal or hard</small></span></a>
-        <a class="btn mode" id="playOnline" href="#/online"><span class="ic">♚︎</span><span>Play online<small>Find an opponent</small></span></a>
+        <a class="btn mode" id="playOnline" href="#/online"><span class="ic">♚︎</span><span>Play online<small>Join or host a room</small></span></a>
         <span class="online-count" id="onlineCount"></span>
       </div>
     </div>
@@ -1125,10 +1125,10 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 
   function orient() { V.flipped = !NET.watching && !!NET.role && myColor() === 'b'; }
 
-  // ---------- Lobby: online count and "Play online" matchmaking ----------
-  // Every page keeps one lobby socket open. The server sends how many pages are connected and, while
-  // we are searching, the code of the game once someone else is searching too (a rated 10+5 room).
-  const LOBBY = { ws: null, count: null, searching: false, status: '', timer: null };
+  // ---------- Lobby: online count and the list of open rooms ----------
+  // Every page keeps one lobby socket open. The server sends how many pages are connected and which
+  // rooms wait for a second player. While we host a room nobody has joined, we announce it here.
+  const LOBBY = { ws: null, count: null, rooms: [], hosting: null, timer: null };
   function renderCount() {
     const n = typeof LOBBY.count === 'number' ? Math.max(0, LOBBY.count - 1) : null; // not counting this page
     $('onlineCount').textContent = n === null ? '' : n + (n === 1 ? ' other player online' : ' other players online');
@@ -1137,71 +1137,46 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (LOBBY.ws && LOBBY.ws.readyState === 1) { try { LOBBY.ws.send(JSON.stringify(msg)); } catch (_) {} return true; }
     return false;
   }
+  function lobbyLost() {
+    LOBBY.ws = null; LOBBY.count = null; LOBBY.rooms = []; LOBBY.hosting = null;
+    renderCount();
+    renderOnline();
+    LOBBY.timer = setTimeout(lobbyConnect, 3000);
+  }
   function lobbyConnect() {
     clearTimeout(LOBBY.timer);
     let ws;
-    try { ws = new WebSocket(SERVER + '/lobby/play'); } catch (_) {
-      LOBBY.ws = null; LOBBY.count = null;
-      if (LOBBY.searching) LOBBY.status = 'Cannot reach the game server. Retrying…';
-      renderCount();
-      renderOnline();
-      LOBBY.timer = setTimeout(lobbyConnect, 3000);
-      return;
-    }
+    try { ws = new WebSocket(SERVER + '/lobby/play'); } catch (_) { lobbyLost(); return; }
     LOBBY.ws = ws;
-    ws.onopen = () => {
-      if (ws !== LOBBY.ws) return;
-      if (LOBBY.searching) { lobbySearch(); renderOnline(); }
-    };
+    ws.onopen = () => { if (ws === LOBBY.ws) syncHosting(); };
     ws.onmessage = e => {
       if (ws !== LOBBY.ws) return;
       let m;
       try { m = JSON.parse(e.data); } catch (_) { return; }
       if (!m || typeof m !== 'object') return;
       if (m.type === 'count' && typeof m.n === 'number') { LOBBY.count = m.n; renderCount(); }
-      else if (m.type === 'matched' && LOBBY.searching && /^[A-Z0-9]{6}$/.test(m.code)) {
-        LOBBY.searching = false; LOBBY.status = '';
-        go('#' + m.code);
-      }
+      else if (m.type === 'rooms' && Array.isArray(m.rooms)) { LOBBY.rooms = m.rooms; renderOnline(); }
     };
-    ws.onclose = () => {
-      if (ws !== LOBBY.ws) return;
-      LOBBY.ws = null; LOBBY.count = null;
-      if (LOBBY.searching) LOBBY.status = 'Cannot reach the game server. Retrying…';
-      renderCount();
-      renderOnline();
-      LOBBY.timer = setTimeout(lobbyConnect, 3000);
-    };
+    ws.onclose = () => { if (ws === LOBBY.ws) lobbyLost(); };
   }
-  function lobbySearch() {
-    LOBBY.status = 'Searching… (10 min + 5 s)';
-    lobbySend({ type: 'search', token: ME, session: ACCT ? ACCT.token : undefined });
-  }
-  function stopSearch() {
-    if (!LOBBY.searching) return;
-    LOBBY.searching = false; LOBBY.status = '';
-    lobbySend({ type: 'cancel' });
-  }
-  // Play online: show the online panel, leave any open game, and queue for a 10 min + 5 s game.
-  function playOnline() {
-    if (V.busy || LOBBY.searching) return;
-    if (NET.code) leaveGame();
-    go('#/online');
-    LOBBY.searching = true;
-    if (LOBBY.ws && LOBBY.ws.readyState === 1) lobbySearch();
-    else LOBBY.status = 'Cannot reach the game server. Retrying…';
-    renderOnline();
+  // Our room is listed while we are in it, nobody has joined, and no game has started.
+  function syncHosting() {
+    const want = NET.code && NET.role === 'host' && NET.gotState && !NET.ready && !NET.actions.length &&
+      V.mode === 'online' && !$('view-game').hidden ? NET.code : null;
+    if (want === LOBBY.hosting) return;
+    const sent = want ? lobbySend({ type: 'host', code: want, clock: NET.clock && NET.clock.key, color: NET.hostColor, name: myName, session: ACCT ? ACCT.token : undefined })
+      : lobbySend({ type: 'unhost' });
+    if (sent) LOBBY.hosting = want;
   }
 
   // Shows our saved copy of the game right away, then connects; the server's copy replaces it.
   function openGame(code, opts) {
-    stopSearch();
     stopNet();
     const create = !!(opts && opts.create);
     const saved = create ? null : store.get('game-' + code);
     NET.code = code;
     NET.missing = false; NET.note = ''; NET.status = 'Connecting to the game…'; NET.gotState = false;
-    NET.create = create ? { clock: clockSel.value, color: opts.color } : null;
+    NET.create = create ? { clock: clockSel.value, color: opts.color, rated: true } : null;
     NET.watching = !!saved && saved.role === 'watch';
     NET.role = create ? 'host' : saved && !NET.watching ? saved.role : null;
     NET.hostColor = create ? opts.color : saved ? saved.hostColor : 'w';
@@ -1239,7 +1214,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   function setMode(mode) {
     if (V.busy || V.mode === mode) return;
     V.mode = mode;
-    if (mode !== 'online') stopSearch();
     clearSel();
     if (mode === 'cpu') V.flipped = CPU.color === 'w';
     if (mode === 'puzzle') V.flipped = PZ.p.side === 'b';
@@ -1295,7 +1269,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   $('promo').addEventListener('click', e => { if (e.target.id === 'promo') $('promo').hidden = true; });
 
   let lastPanelKey = '';
-  function renderAll() { render(); renderOnline(); renderChat(); }
+  function renderAll() { render(); renderOnline(); renderChat(); syncHosting(); }
 
   function render() {
     const real = shownGame();
@@ -1357,7 +1331,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (lastEval !== null) drawEval(lastEval);
     alignStack();
     // keep the online panel in step with anything it shows
-    const panelKey = JSON.stringify([V.mode, NET.code, NET.role, NET.connected, NET.watching, NET.watchers, NET.round, NET.G.phase, NET.names, NET.status, NET.ready, NET.online, NET.rated, NET.accounts, LOBBY.searching, LOBBY.status]);
+    const panelKey = JSON.stringify([V.mode, NET.code, NET.role, NET.connected, NET.watching, NET.watchers, NET.round, NET.G.phase, NET.names, NET.status, NET.ready, NET.online, NET.rated, NET.accounts, LOBBY.rooms]);
     if (panelKey !== lastPanelKey) { lastPanelKey = panelKey; renderOnline(); }
   }
 
@@ -1597,12 +1571,21 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       frag.appendChild(el('h2', '', 'Online'));
       frag.appendChild(nameRow('Your name'));
       note(ACCT ? 'You are logged in, so your username is your name.' : 'You can play as a guest. Log in to play rated games.');
-      const mmRow = el('div', 'btnrow');
-      mmRow.appendChild(button('Play online', 'primary', playOnline));
-      if (LOBBY.searching) mmRow.appendChild(button('Cancel', '', () => { stopSearch(); renderOnline(); }));
-      frag.appendChild(mmRow);
-      note(LOBBY.searching ? LOBBY.status : 'Pairs you with anyone searching, 10 min + 5 s. Rated when both players are logged in.');
-      frag.appendChild(el('p', 'label', 'New game, you play (casual)'));
+      frag.appendChild(el('p', 'label', 'Open rooms'));
+      const rooms = el('ul', 'games');
+      for (const r of LOBBY.rooms) {
+        const li = el('li'), info = el('div', 'ginfo'), top = el('div', 'gtop');
+        top.append(el('span', 'players', r.name || 'Player'));
+        if (r.account) top.append(el('span', 'code', String(r.rating)));
+        else top.append(el('span', 'guesttag', 'guest'));
+        const tc = timeControl(r.clock);
+        info.append(top, el('div', 'gstatus', `${tc ? `${tc.base / 60000} min + ${tc.inc / 1000} s` : 'No clock'} · you play ${NAME[other(r.color)]}`));
+        li.append(info, button('Join', 'primary', () => go('#' + r.code)));
+        rooms.appendChild(li);
+      }
+      if (!LOBBY.rooms.length) rooms.appendChild(el('li', 'empty', LOBBY.ws ? 'No open rooms right now. Host one!' : 'Cannot reach the game server. Retrying…'));
+      frag.appendChild(rooms);
+      frag.appendChild(el('p', 'label', 'Host a room, you play'));
       const row = el('div', 'btnrow');
       for (const [c, t] of [['w', 'White'], ['b', 'Black'], ['random', 'Random']]) {
         row.appendChild(button(t, '', () => {
@@ -1611,6 +1594,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         }));
       }
       frag.appendChild(row);
+      note(`Clock: ${clockSel.options[clockSel.selectedIndex].text} (change it under the board). Rated when both players are logged in and there is a clock.`);
       const form = el('form', 'joinrow');
       form.innerHTML = '<label for="codeInput" class="label">Join with a code</label><div class="btnrow"><input id="codeInput" autocomplete="off" spellcheck="false" maxlength="6" placeholder="K7QF2M"><button class="btn small" type="submit">Join</button></div>';
       form.addEventListener('submit', e => {
@@ -2236,11 +2220,11 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   function show(v) {
     if (v !== view) window.scrollTo(0, 0);
     view = v;
-    if (v !== 'game') stopSearch();
     document.querySelectorAll('.view').forEach(e => { e.hidden = e.id !== 'view-' + v; });
     document.querySelectorAll('.nav a').forEach(a => {
       if (a.dataset.view === v) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
+    syncHosting();
   }
   // Leaderboard and profile views. Names are always set with textContent; guests have no profile link.
   let viewToken = 0;
@@ -2428,7 +2412,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     return mode === 'online' && NET.code ? '#' + NET.code : '#/' + (mode === 'cpu' ? 'computer' : mode);
   }
   window.addEventListener('hashchange', route);
-  $('playOnline').addEventListener('click', e => { e.preventDefault(); playOnline(); });
 
   // The home page's board: a position with one move on the stack for each side.
   ['rnbqkbnr', 'pppp.ppp', '........', '....p...', '..B.P...', '........', 'PPPP.PPP', 'RNBQK.NR'].forEach((row, r) => [...row].forEach((ch, c) => {
