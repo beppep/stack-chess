@@ -1464,7 +1464,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     }
     if (V.mode === 'puzzle' && PZ.state !== 'play' && !V.busy) {
       s.innerHTML = chip(PZ.p.side) + text(PZ.state === 'solved' ? 'Solved!' : 'Not this time', PZ.state === 'solved'
-        ? 'You captured the king in time.' : `${NAME[other(PZ.p.side)]} found a way out. Try again, or look at what it did on the stack.`);
+        ? 'You captured the king in time.' : `${NAME[other(PZ.p.side)]} survived your ${PZ.p.n} moves. Try again.`);
       return;
     }
     if (V.mode === 'puzzle' && c !== PZ.p.side && G.phase !== 'resolving' && G.phase !== 'over') {
@@ -1889,18 +1889,22 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     }
     return true;
   }
-  // The defender's choice: an escape if there is one, else the line that holds out longest.
+  // The defender's choice: an escape if there is one, else the line that holds out longest. Between
+  // equally good options it fights the stack: it takes a piece that has a move on the stack, with
+  // another piece than the king if it can.
   function defend(s, att, k) {
-    let best = null, bestK = -1;
+    let best = null, bestScore = -1;
     for (const d of sActions(s)) {
       const c = sApply(s, d);
-      if (c.winner) { if (c.winner !== att) return { d, escape: true }; if (!best) best = d; continue; }
-      if (!attWins(c, att, k)) return { d, escape: true };
+      if (c.winner) { if (c.winner !== att) return d; if (!best) best = d; continue; }
       let need = 0;
-      while (need < k && !attWins(c, att, need)) need++;
-      if (need > bestK) { best = d; bestK = need; }
+      while (need <= k && !attWins(c, att, need)) need++; // need > k: the king escapes
+      const target = d.t === 'move' && s.st.board[d.m.to];
+      const fights = !!target && target.c !== s.cur && s.stack.some(e => e.pieceId === target.id);
+      const score = need * 3 + (fights ? (s.st.board[d.m.from].t === 'k' ? 1 : 2) : 0);
+      if (score > bestScore) { best = d; bestScore = score; }
     }
-    return best && { d: best, escape: false };
+    return best;
   }
 
   function puzzleGame(p) {
@@ -1933,20 +1937,23 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (V.mode !== 'puzzle' || V.busy || PZ.thinking || PZ.state !== 'play') return;
     const G = PZ.G, att = PZ.p.side;
     if (G.phase === 'over') { finishPuzzle(G.result.winner === att ? 'solved' : 'failed'); return; }
-    if (G.cur === att) return; // the solver's turn
+    if (G.cur === att) {
+      // The solver plays all their moves; it fails only once they are used and no resolve takes the king.
+      if (PZ.used >= PZ.p.n && !attWins(sFrom(G), att, 0)) finishPuzzle('failed');
+      return;
+    }
     PZ.thinking = true;
     render();
     setTimeout(async () => {
       if (G !== PZ.G) return;
-      const pick = defend(sFrom(G), att, PZ.p.n - PZ.used);
+      const d = defend(sFrom(G), att, PZ.p.n - PZ.used);
       PZ.thinking = false;
-      if (!pick) { finishPuzzle('failed'); return; } // the defender has no move: a draw
-      const a = toAction(pick.d);
+      if (!d) { finishPuzzle('failed'); return; } // the defender has no move: a draw
+      const a = toAction(d);
       const gen = startAction(G, a);
       if (gen) await animate(gen);
       if (a.then && G === PZ.G && G.phase !== 'over') { const gen2 = startAction(G, a.then); if (gen2) await animate(gen2); }
-      if (G !== PZ.G) return;
-      if (pick.escape) finishPuzzle('failed'); else puzzleTurn();
+      if (G === PZ.G) puzzleTurn();
     }, 60);
   }
   function renderPuzzlePanel() {
@@ -1956,7 +1963,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     frag.appendChild(el('h2', '', p.title));
     frag.appendChild(el('p', 'hint', `${LEVELS.find(l => l[0] === p.level)[1]} · ${mateLabel(p)} · you play ${NAME[p.side]}`));
     const msg = PZ.state === 'solved' ? 'Solved! The king is captured.'
-      : PZ.state === 'failed' ? 'Not this time: that let the king escape.'
+      : PZ.state === 'failed' ? `Not this time: your ${p.n} moves are used and the king survived.`
       : `Force a king capture within ${p.n} moves. Moves left: ${Math.max(0, p.n - PZ.used)}.`;
     frag.appendChild(el('p', 'note' + (PZ.state === 'failed' ? ' warn' : ''), msg));
     const row = el('div', 'btnrow');
