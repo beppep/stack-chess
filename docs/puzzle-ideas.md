@@ -15,6 +15,7 @@ On the site (beta/index.html, `PUZZLES`), each checked by the exact search:
 - m4 "Rook lift": W Ke4 Rh3 Nf4 Pg3, B Kh5 Bb6 Pc3 (mate in 3; Nxh5 or Rxh5). m5 "Double attack": W Kb1 Rf7 Ng6 Pg4, B Ke7 Bb5 Pg3 (mate in 3; Rxe7 or Nxe7).
 - h3 "Crowded corner": W Kb1 Rg5 Nb6 Pa6, B Kc8 Pc5 Pe4 Nc1 (mate in 4; only Rg8).
 All found by search, labels checked with the page's counting.
+- e6 "Waiting game" (Bror's idea: bishop attacks the black king, white king two steps away, a black pawn to waste time): W Kh7 Bh3, B Kf5 Pb7. Mate in 4; only Kg6 wins first. Of 30 such positions tried, 22 were mate in 4, 5 mate in 3.5.
 Replace the guesses with Bror's exact positions when he gives them.
 
 Open (2026-11-06):
