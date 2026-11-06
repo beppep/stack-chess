@@ -12,8 +12,8 @@ On the site (beta/index.html, `PUZZLES`), each checked by the exact search:
 - h1 "Only one way" (hard): W Kb1 Rg5, B Kc8 Pc5, White to move. Found by search: needs 4 turns, then Black must resolve (mate in 4.5); exactly one first move wins (Rg5xc5).
 - h2 "Knight watch" (hard): W Kb1 Rg5 Nb6, B Kc8 Pc5 Pe4, White to move. Found by adding pieces to h1: needs 4 turns, the last one a resolve (mate in 4); 2 first moves win (Rg8, Rxc5).
 - e4 "Knight and bishop": W Kb3 Nb1 Bg4, B Kd1 Pb4 (mate in 2.5; Kxb4 or Nd2).
-- m4 "Rook lift": W Ke4 Rh3 Nf4 Pg3, B Kh5 Bb6 Pc3 (mate in 3; Nxh5 or Rxh5). m5 "Double attack": W Kb1 Rf7 Ng6 Pg4, B Ke7 Bb5 Pg3 (mate in 3; Rxe7 or Nxe7).
-- h3 "Crowded corner": W Kb1 Rg5 Nb6 Pa6, B Kc8 Pc5 Pe4 Nc1 (mate in 4; only Rg8).
+- m4 "Rook lift": W Ke4 Rh3 Nf4 Pg3, B Kh5 Bb7 Pc3 (bishop attacks your king; mate in 4; 8 first moves win). m5 "Double attack": W Kb1 Rf7 Ng6 Pg4, B Ke7 Bd3 Pg3 (bishop attacks your king; label not verified).
+- h3 "Crowded corner": W Kb1 Rg5 Nb6 Pa6, B Kc8 Pc5 Pa2 Nd2 (your king attacked twice, for Bror to test; label not verified).
 All found by search, labels checked with the page's counting.
 - e6 "Waiting game" (Bror's idea: bishop attacks the black king, white king two steps away, a black pawn to waste time): W Kh7 Bh3, B Kf5 Pb7. Mate in 4; only Kg6 wins first. Of 30 such positions tried, 22 were mate in 4, 5 mate in 3.5.
 Replace the guesses with Bror's exact positions when he gives them.
