@@ -382,6 +382,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 .online h2 { margin: 0; }
 .online .label { margin: 4px 0 -4px; font-size: .78rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); display: block; }
 .online .note { margin: 0; font-size: .92rem; color: var(--muted); }
+#roomsBody .online { gap: 14px; }
+#roomsBody .games { max-height: none; }
 .online .note.warn { color: var(--amber); }
 .btnrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .joinrow { display: flex; flex-direction: column; gap: 8px; margin: 0; }
@@ -472,6 +474,10 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   <main class="page view" id="view-profile" hidden><h1 id="profileName"></h1><div id="profileBody"></div></main>
   <main class="page view" id="view-login" hidden><h1>Log in</h1><div id="loginBody"></div></main>
   <main class="page view" id="view-signup" hidden><h1>Sign up</h1><div id="signupBody"></div></main>
+  <main class="page view" id="view-online" hidden>
+    <h1 id="onlineTitle">Play online</h1>
+    <div id="roomsBody"></div>
+  </main>
   <main class="page view" id="view-puzzles" hidden>
     <h1>Puzzles</h1>
     <p>Capture the king in the given number of turns. Resolving is part of your turn. "Mate in 2.5" means you get two turns, and then your opponent has to let it resolve and lose. "Mate in 4" means you let it resolve on your fourth turn and take the king. The computer defends as well as it can, and any move that still wins counts.</p>
@@ -1036,10 +1042,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         adoptState(m);
         break;
       case 'missing':
-        NET.missing = true;
-        NET.status = 'There is no game with this code. Check the code, or create a new game.';
-        stopNet();
-        renderAll();
+        leaveGame();
+        NET.note = 'There is no game with this code.';
+        renderOnline();
         break;
       case 'taken': // the random code we picked is already in use: pick another
         openGame(randomCode(), { create: true, color: NET.create ? NET.create.color : 'w' });
@@ -1162,8 +1167,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   }
   // Our room is listed while we are in it, nobody has joined, and no game has started.
   function syncHosting() {
-    const want = NET.code && NET.role === 'host' && NET.gotState && !NET.ready && !NET.actions.length &&
-      V.mode === 'online' && !$('view-game').hidden ? NET.code : null;
+    const want = NET.gotState && hostWaiting() &&
+      V.mode === 'online' && !$('view-online').hidden ? NET.code : null;
     if (want === LOBBY.hosting) return;
     const sent = want ? lobbySend({ type: 'host', code: want, clock: NET.clock && NET.clock.key, color: NET.hostColor, name: myName, session: ACCT ? ACCT.token : undefined })
       : lobbySend({ type: 'unhost' });
@@ -1270,7 +1275,15 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   $('promo').addEventListener('click', e => { if (e.target.id === 'promo') $('promo').hidden = true; });
 
   let lastPanelKey = '';
-  function renderAll() { render(); renderOnline(); renderChat(); syncHosting(); }
+  function renderAll() { onlineView(); render(); renderOnline(); renderChat(); syncHosting(); }
+  // We host a room nobody has joined yet: no game to show.
+  const hostWaiting = () => !!NET.code && NET.role === 'host' && !NET.ready && !NET.actions.length;
+  // Online shows the board only for a game; without one it shows the rooms screen.
+  function onlineView() {
+    if (V.mode !== 'online' || ($('view-game').hidden && $('view-online').hidden)) return;
+    const want = !NET.code || hostWaiting() ? 'online' : 'game';
+    if ($('view-' + want).hidden) show(want);
+  }
 
   function render() {
     const real = shownGame();
@@ -1561,19 +1574,44 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     return span;
   }
 
+  function inviteRow() {
+    const box = el('div', 'online');
+    box.appendChild(Object.assign(el('label', 'label', 'Invite link'), { htmlFor: 'inviteInput' }));
+    const row = el('div', 'btnrow');
+    const inp = el('input');
+    inp.id = 'inviteInput'; inp.readOnly = true;
+    inp.value = location.origin + location.pathname + '#' + NET.code;
+    inp.addEventListener('focus', () => inp.select());
+    const cp = button('Copy', '', () => {
+      const done = () => { cp.textContent = 'Copied'; setTimeout(() => { cp.textContent = 'Copy'; }, 1500); };
+      try { navigator.clipboard.writeText(inp.value).then(done, () => { inp.focus(); inp.select(); }); }
+      catch (_) { inp.focus(); inp.select(); }
+    });
+    row.append(inp, cp);
+    box.appendChild(row);
+    return box;
+  }
+
   function renderOnline() {
     if (V.mode !== 'online') return;
     if (document.activeElement === nameInput) return; // don't redraw under someone who is typing their name
-    const box = $('onlineBody');
+    const rooms = !NET.code || hostWaiting();
+    const box = $(rooms ? 'roomsBody' : 'onlineBody');
     const frag = el('div', 'online');
     const note = (txt, cls) => { if (txt) frag.appendChild(el('p', 'note ' + (cls || ''), txt)); };
 
-    if (!NET.code) {
-      frag.appendChild(el('h2', '', 'Online'));
-      frag.appendChild(nameRow('Your name'));
-      note(ACCT ? 'You are logged in, so your username is your name.' : 'You can play as a guest. Log in to play rated games.');
+    $('onlineTitle').textContent = NET.code ? 'Waiting for an opponent' : 'Play online';
+    if (hostWaiting()) {
+      const tc = timeControl(NET.clock && NET.clock.key);
+      note(`You play ${NAME[NET.hostColor]} · ${tc ? tc.base / 60000 + ' min + ' + tc.inc / 1000 + ' s' : 'No clock'}. Your room is in the list. The game starts when someone joins.`);
+      note(NET.status, 'warn');
+      frag.appendChild(inviteRow());
+      const row = el('div', 'btnrow');
+      row.appendChild(button('Cancel room', '', leaveGame));
+      frag.appendChild(row);
+    } else if (!NET.code) {
       frag.appendChild(el('p', 'label', 'Open rooms'));
-      const rooms = el('ul', 'games');
+      const list = el('ul', 'games');
       for (const r of LOBBY.rooms) {
         const li = el('li'), info = el('div', 'ginfo'), top = el('div', 'gtop');
         top.append(el('span', 'players', r.name || 'Player'));
@@ -1582,11 +1620,18 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         const tc = timeControl(r.clock);
         info.append(top, el('div', 'gstatus', `${tc ? `${tc.base / 60000} min + ${tc.inc / 1000} s` : 'No clock'} · you play ${NAME[other(r.color)]}`));
         li.append(info, button('Join', 'primary', () => go('#' + r.code)));
-        rooms.appendChild(li);
+        list.appendChild(li);
       }
-      if (!LOBBY.rooms.length) rooms.appendChild(el('li', 'empty', LOBBY.ws ? 'No open rooms right now. Host one!' : 'Cannot reach the game server. Retrying…'));
-      frag.appendChild(rooms);
-      frag.appendChild(el('p', 'label', 'Host a room, you play'));
+      if (!LOBBY.rooms.length) list.appendChild(el('li', 'empty', LOBBY.ws ? 'No open rooms right now. Host one!' : 'Cannot reach the game server. Retrying…'));
+      frag.appendChild(list);
+      frag.appendChild(el('p', 'label', 'Host a room'));
+      frag.appendChild(nameRow('Your name'));
+      const clockRow = el('div', 'btnrow'), pick = clockSel.cloneNode(true);
+      pick.id = 'roomClock';
+      pick.value = clockSel.value;
+      pick.addEventListener('change', () => { clockSel.value = pick.value; clockSel.dispatchEvent(new Event('change')); });
+      clockRow.append(Object.assign(el('label', 'label', 'Clock'), { htmlFor: 'roomClock' }), pick);
+      frag.appendChild(clockRow);
       const row = el('div', 'btnrow');
       for (const [c, t] of [['w', 'White'], ['b', 'Black'], ['random', 'Random']]) {
         row.appendChild(button(t, '', () => {
@@ -1595,7 +1640,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         }));
       }
       frag.appendChild(row);
-      note(`Clock: ${clockSel.options[clockSel.selectedIndex].text} (change it under the board). Rated when both players are logged in and there is a clock.`);
+      note(ACCT ? 'Rated when both players are logged in and there is a clock.' : 'You can play as a guest. Log in to play rated games.');
       const form = el('form', 'joinrow');
       form.innerHTML = '<label for="codeInput" class="label">Join with a code</label><div class="btnrow"><input id="codeInput" autocomplete="off" spellcheck="false" maxlength="6" placeholder="K7QF2M"><button class="btn small" type="submit">Join</button></div>';
       form.addEventListener('submit', e => {
@@ -1674,19 +1719,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         })));
         frag.appendChild(reps);
       }
-      frag.appendChild(Object.assign(el('label', 'label', 'Invite link'), { htmlFor: 'inviteInput' }));
-      const row = el('div', 'btnrow');
-      const inp = el('input');
-      inp.id = 'inviteInput'; inp.readOnly = true;
-      inp.value = location.origin + location.pathname + '#' + NET.code;
-      inp.addEventListener('focus', () => inp.select());
-      const cp = button('Copy', '', () => {
-        const done = () => { cp.textContent = 'Copied'; setTimeout(() => { cp.textContent = 'Copy'; }, 1500); };
-        try { navigator.clipboard.writeText(inp.value).then(done, () => { inp.focus(); inp.select(); }); }
-        catch (_) { inp.focus(); inp.select(); }
-      });
-      row.append(inp, cp);
-      frag.appendChild(row);
+      frag.appendChild(inviteRow());
       const row2 = el('div', 'btnrow');
       row2.appendChild(button('Back to games', '', leaveGame));
       if (NET.G.phase === 'over' && NET.connected && !NET.watching && NET.online[NET.role === 'host' ? 'guest' : 'host']) row2.appendChild(button('Rematch (swap colors)', 'primary', rematch));
@@ -2329,6 +2362,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       show('game'); setMode(MODE_ROUTE[name]);
       // An open online game keeps its own link.
       if (name === 'online' && V.mode === 'online' && NET.code) { try { history.replaceState(null, '', '#' + NET.code); } catch (_) {} }
+      if (name === 'online') renderAll();
       return;
     }
     if (name === 'u' && arg) {
