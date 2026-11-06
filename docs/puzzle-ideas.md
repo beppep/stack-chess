@@ -3,6 +3,12 @@
 For the later Puzzles project. Written down as Bror described them; not checked yet.
 "Mate in 2.5" is Bror's count (half-turns on the stack count as halves).
 
+On the site (beta/index.html, `PUZZLES`), each checked by the exact search:
+- e1 "Two attackers": W Kf1 Re8 Bd7, B Ke6, White to move. Claude's guess at idea 1; wins in 2, not 1; 19 first moves win.
+- e2 "Lone rook": W Ke8 Re4, B Kh4, White to move. Claude's guess at idea 2; wins in 2, not 1; only the 5 king moves win first.
+- m1 "The pawn bites": idea 3 below, White to move; wins in 3, not 2; 14 first moves win.
+Replace the guesses with Bror's exact positions when he gives them.
+
 ## Easy
 
 1. Only the two kings plus attackers: the black king is threatened by 2 pieces. Mate in 2.5.

@@ -335,6 +335,9 @@ a.btn { display: inline-block; text-decoration: none; }
 .profilehead { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 0 0 16px; color: var(--fg); font-size: 1.1rem; }
 .profilehead b { color: var(--amber); }
 .page .emptyline { color: var(--muted); margin: 8px 0; }
+.page h2 { font-family: var(--font-display); font-size: 1.15rem; letter-spacing: .06em; margin: 22px 0 8px; }
+ul.puzzles { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-width: 420px; }
+ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 
 /* Name box */
 .online input.nameinput { flex: 0 1 11rem; font-family: var(--font-body); font-weight: 700; font-size: .95rem; letter-spacing: 0; text-transform: none; }
@@ -428,7 +431,7 @@ a.btn { display: inline-block; text-decoration: none; }
     <nav class="nav" aria-label="Site">
       <a href="#/leaderboard" data-view="leaderboard">Leaderboard</a>
       <a href="#/how" data-view="how">How to play</a>
-      <a href="#/extras" data-view="extras">Extras</a>
+      <a href="#/puzzles" data-view="puzzles">Puzzles</a>
     </nav>
     <span class="spacer"></span>
     <div class="account" id="account">
@@ -467,9 +470,10 @@ a.btn { display: inline-block; text-decoration: none; }
   <main class="page view" id="view-profile" hidden><h1 id="profileName"></h1><div id="profileBody"></div></main>
   <main class="page view" id="view-login" hidden><h1>Log in</h1><div id="loginBody"></div></main>
   <main class="page view" id="view-signup" hidden><h1>Sign up</h1><div id="signupBody"></div></main>
-  <main class="page view" id="view-extras" hidden>
-    <h1>Extras</h1>
-    <p>Puzzles — coming soon.</p>
+  <main class="page view" id="view-puzzles" hidden>
+    <h1>Puzzles</h1>
+    <p>Capture the king within the given number of moves. "Mate in 2.5" means you get two moves, and then your opponent has to let it resolve and lose. The computer defends as well as it can, and any move that still wins counts.</p>
+    <div id="puzzleList"></div>
   </main>
   <main class="page view" id="view-how" hidden>
     <h1>How to play</h1>
@@ -579,6 +583,10 @@ a.btn { display: inline-block; text-decoration: none; }
           <button class="btn small" type="button" data-l="hard">Hard</button>
         </div>
         <p class="hint">Picking a side starts a new game. The computer looks a few moves and responses ahead and counts material.</p>
+      </div>
+
+      <div class="panel" id="puzzlePanel" hidden>
+        <div id="puzzleBody"></div>
       </div>
 
       <div class="panel" id="replayPanel" hidden>
@@ -795,6 +803,10 @@ a.btn { display: inline-block; text-decoration: none; }
         if (nv > bestNoisy) { bestNoisy = nv; pick = a; }
       }
     }
+    return toAction(pick);
+  }
+  // A search action as a game action: a move, a resolve, or a resolve followed by a move.
+  function toAction(pick) {
     if (pick.t === 'resolve') return { t: 'resolve' };
     const move = pick.m.promo ? { t: 'move', from: pick.m.from, to: pick.m.to, p: 'q' } : { t: 'move', from: pick.m.from, to: pick.m.to };
     return pick.t === 'resolve-move' ? { t: 'resolve', then: move } : move;
@@ -898,9 +910,10 @@ a.btn { display: inline-block; text-decoration: none; }
     store.set('recent', recent.slice(0, 12));
   }
 
-  const shownGame = () => V.mode === 'replay' ? REP.G : V.mode === 'cpu' ? CG : (V.mode === 'local' ? LG : (NET.code ? NET.G : freshGame()));
+  const shownGame = () => V.mode === 'replay' ? REP.G : V.mode === 'puzzle' ? PZ.G : V.mode === 'cpu' ? CG : (V.mode === 'local' ? LG : (NET.code ? NET.G : freshGame()));
   function myColors() {
     if (V.mode === 'replay') return [];
+    if (V.mode === 'puzzle') return PZ.state === 'play' && !PZ.thinking ? [PZ.p.side] : [];
     if (V.mode === 'local') return ['w', 'b'];
     if (V.mode === 'cpu') return [other(CPU.color)];
     return NET.code && NET.connected && !NET.watching ? [myColor()] : [];
@@ -935,6 +948,16 @@ a.btn { display: inline-block; text-decoration: none; }
   async function act(a) {
     if (!canAct()) return;
     a = withClock(shownGame(), a);
+    if (V.mode === 'puzzle') {
+      const gen = startAction(PZ.G, a);
+      if (!gen) return;
+      if (a.t === 'move') PZ.used++; // a resolve that wins is free
+      clearSel();
+      renderPuzzlePanel();
+      await animate(gen);
+      puzzleTurn();
+      return;
+    }
     if (V.mode === 'local' || V.mode === 'cpu') {
       const game = V.mode === 'cpu' ? CG : LG;
       const snapshot = JSON.parse(JSON.stringify(game));
@@ -1221,6 +1244,7 @@ a.btn { display: inline-block; text-decoration: none; }
     if (mode !== 'online') stopSearch();
     clearSel();
     if (mode === 'cpu') V.flipped = CPU.color === 'w';
+    if (mode === 'puzzle') V.flipped = PZ.p.side === 'b';
     if (mode === 'online' && NET.code) orient();
     if (mode === 'local') V.flipped = false;
     renderAll();
@@ -1315,9 +1339,11 @@ a.btn { display: inline-block; text-decoration: none; }
     }
     $('modeLocal').setAttribute('aria-selected', V.mode === 'local');
     $('modeOnline').setAttribute('aria-selected', V.mode === 'online');
-    $('newBtn').hidden = V.mode === 'online' || V.mode === 'replay';
-    $('undoBtn').hidden = V.mode === 'online' || V.mode === 'replay';
-    $('replayBtn').hidden = V.mode === 'replay' || !real.acts.length;
+    $('newBtn').hidden = V.mode === 'online' || V.mode === 'replay' || V.mode === 'puzzle';
+    $('undoBtn').hidden = V.mode === 'online' || V.mode === 'replay' || V.mode === 'puzzle';
+    $('replayBtn').hidden = V.mode === 'replay' || V.mode === 'puzzle' || !real.acts.length;
+    $('puzzlePanel').hidden = V.mode !== 'puzzle';
+    $('evalbar').hidden = V.mode === 'puzzle'; // it would give the answer away
     $('replayPanel').hidden = V.mode !== 'replay';
     if (V.mode === 'replay') renderReplay();
     $('undoBtn').disabled = V.busy || CPU.thinking || !undoEntry();
@@ -1403,7 +1429,8 @@ a.btn { display: inline-block; text-decoration: none; }
 
     if (G.phase === 'over' && (!online || NET.code)) {
       const w = G.result.winner;
-      s.innerHTML = (w ? chip(w) : '') + text(G.result.text, V.mode === 'replay' ? `Replay: action ${REP.pos} of ${REP.acts.length}.` : online ? 'Start a rematch from the Online panel.' : 'Start a new game to play again.');
+      s.innerHTML = (w ? chip(w) : '') + text(G.result.text, V.mode === 'replay' ? `Replay: action ${REP.pos} of ${REP.acts.length}.` : online ? 'Start a rematch from the Online panel.'
+        : V.mode === 'puzzle' ? (w === PZ.p.side ? 'Puzzle solved.' : 'Try the puzzle again.') : 'Start a new game to play again.');
       banner.hidden = false;
       banner.innerHTML = `<div class="big">${w ? NAME[w] + ' wins' : 'Draw'}</div><div class="status-sub">${G.result.text}.</div>`;
       return;
@@ -1433,6 +1460,16 @@ a.btn { display: inline-block; text-decoration: none; }
         : `Waiting for ${nameOfColor(c) || 'your opponent'} to move.`;
       s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`, '');
       s.querySelector('.status-sub').textContent = sub; // the name is user-provided: no HTML
+      return;
+    }
+    if (V.mode === 'puzzle' && PZ.state !== 'play' && !V.busy) {
+      s.innerHTML = chip(PZ.p.side) + text(PZ.state === 'solved' ? 'Solved!' : 'Not this time', PZ.state === 'solved'
+        ? 'You captured the king in time.' : `${NAME[other(PZ.p.side)]} found a way out. Try again, or look at what it did on the stack.`);
+      return;
+    }
+    if (V.mode === 'puzzle' && c !== PZ.p.side && G.phase !== 'resolving' && G.phase !== 'over') {
+      s.innerHTML = chip(c) + text(PZ.thinking ? 'The computer is defending…' : `${NAME[c]} (computer) defends`,
+        G.phase === 'respond' ? `Deciding whether to respond to ${G.stack[G.stack.length - 1].label}.` : 'Choosing a move.');
       return;
     }
     if (V.mode === 'cpu' && c === CPU.color && G.phase !== 'resolving') {
@@ -1819,6 +1856,135 @@ a.btn { display: inline-block; text-decoration: none; }
   }));
   renderCpuPanel();
 
+  // ---------- Puzzles ----------
+  // A puzzle is a position where the attacker can force a king capture within n moves ("mate in n.5":
+  // the last half is the defender being forced to let it resolve). The computer defends, and moves are
+  // checked by searching every line, so any move that still forces the win counts.
+  const PUZZLES = [
+    { id: 'e1', level: 'easy', title: 'Two attackers', side: 'w', w: 'Kf1 Re8 Bd7', b: 'Ke6', n: 2 },
+    { id: 'e2', level: 'easy', title: 'Lone rook', side: 'w', w: 'Ke8 Re4', b: 'Kh4', n: 2 },
+    { id: 'm1', level: 'medium', title: 'The pawn bites', side: 'w', w: 'Kg1 Ne3 g4', b: 'Kf5 Rg2', n: 3 }
+  ];
+  const LEVELS = [['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']];
+  const PZ = { p: null, G: freshGame(), used: 0, state: 'play', thinking: false };
+  const solvedSet = () => new Set(store.get('puzzles-solved') || []);
+
+  // Can the attacker (att, to act) force a king capture with at most k more moves? A resolve that
+  // captures the king is free: it isn't a new move.
+  function attWins(s, att, k) {
+    for (const a of sActions(s)) {
+      if (a.t === 'resolve') { if (a.r.winner === att) return true; continue; }
+      if (k >= 1 && defLoses(sApply(s, a), att, k - 1)) return true;
+    }
+    return false;
+  }
+  // Does every option of the defender (to act) lose within the attacker's k more moves?
+  function defLoses(s, att, k) {
+    const acts = sActions(s);
+    if (!acts.length) return false; // no possible move is a draw
+    for (const d of acts) {
+      const c = sApply(s, d);
+      if (c.winner) { if (c.winner !== att) return false; continue; }
+      if (!attWins(c, att, k)) return false;
+    }
+    return true;
+  }
+  // The defender's choice: an escape if there is one, else the line that holds out longest.
+  function defend(s, att, k) {
+    let best = null, bestK = -1;
+    for (const d of sActions(s)) {
+      const c = sApply(s, d);
+      if (c.winner) { if (c.winner !== att) return { d, escape: true }; if (!best) best = d; continue; }
+      if (!attWins(c, att, k)) return { d, escape: true };
+      let need = 0;
+      while (need < k && !attWins(c, att, need)) need++;
+      if (need > bestK) { best = d; bestK = need; }
+    }
+    return best && { d: best, escape: false };
+  }
+
+  function puzzleGame(p) {
+    const G = freshGame(null), board = Array(64).fill(null);
+    let id = 0;
+    for (const [list, c] of [[p.w, 'w'], [p.b, 'b']]) for (const t of list.split(' ')) {
+      const s = t.slice(-2);
+      board[(8 - +s[1]) * 8 + FILES.indexOf(s[0])] = { t: t.length === 3 ? t[0].toLowerCase() : 'p', c, id: id++ };
+    }
+    G.st = { board, castle: { wK: false, wQ: false, bK: false, bQ: false }, ep: null };
+    G.cur = p.side;
+    return G;
+  }
+  const mateLabel = p => `Mate in ${p.n}.5`;
+  function startPuzzle(id) {
+    const p = PUZZLES.find(x => x.id === id);
+    if (!p || V.busy) { go('#/puzzles'); return; }
+    Object.assign(PZ, { p, G: puzzleGame(p), used: 0, state: 'play', thinking: false });
+    clearSel();
+    if (V.mode === 'puzzle') { V.flipped = p.side === 'b'; renderAll(); } else setMode('puzzle');
+    renderPuzzlePanel();
+  }
+  function finishPuzzle(state) {
+    PZ.state = state;
+    if (state === 'solved') store.set('puzzles-solved', [...solvedSet().add(PZ.p.id)]);
+    render(); renderPuzzlePanel();
+  }
+  // After each action: check for the end, or let the computer defend.
+  function puzzleTurn() {
+    if (V.mode !== 'puzzle' || V.busy || PZ.thinking || PZ.state !== 'play') return;
+    const G = PZ.G, att = PZ.p.side;
+    if (G.phase === 'over') { finishPuzzle(G.result.winner === att ? 'solved' : 'failed'); return; }
+    if (G.cur === att) return; // the solver's turn
+    PZ.thinking = true;
+    render();
+    setTimeout(async () => {
+      if (G !== PZ.G) return;
+      const pick = defend(sFrom(G), att, PZ.p.n - PZ.used);
+      PZ.thinking = false;
+      if (!pick) { finishPuzzle('failed'); return; } // the defender has no move: a draw
+      const a = toAction(pick.d);
+      const gen = startAction(G, a);
+      if (gen) await animate(gen);
+      if (a.then && G === PZ.G && G.phase !== 'over') { const gen2 = startAction(G, a.then); if (gen2) await animate(gen2); }
+      if (G !== PZ.G) return;
+      if (pick.escape) finishPuzzle('failed'); else puzzleTurn();
+    }, 60);
+  }
+  function renderPuzzlePanel() {
+    const box = $('puzzleBody'), p = PZ.p;
+    if (!p) return;
+    const frag = el('div', 'online');
+    frag.appendChild(el('h2', '', p.title));
+    frag.appendChild(el('p', 'hint', `${LEVELS.find(l => l[0] === p.level)[1]} · ${mateLabel(p)} · you play ${NAME[p.side]}`));
+    const msg = PZ.state === 'solved' ? 'Solved! The king is captured.'
+      : PZ.state === 'failed' ? 'Not this time: that let the king escape.'
+      : `Force a king capture within ${p.n} moves. Moves left: ${Math.max(0, p.n - PZ.used)}.`;
+    frag.appendChild(el('p', 'note' + (PZ.state === 'failed' ? ' warn' : ''), msg));
+    const row = el('div', 'btnrow');
+    row.appendChild(button('Try again', PZ.state === 'failed' ? 'primary' : '', () => startPuzzle(p.id)));
+    const i = PUZZLES.indexOf(p);
+    if (i < PUZZLES.length - 1) row.appendChild(button('Next puzzle', PZ.state === 'solved' ? 'primary' : '', () => go('#/puzzle/' + PUZZLES[i + 1].id)));
+    row.appendChild(button('All puzzles', '', () => go('#/puzzles')));
+    frag.appendChild(row);
+    box.replaceChildren(frag);
+  }
+  function renderPuzzleList() {
+    const box = $('puzzleList'), done = solvedSet();
+    box.textContent = '';
+    for (const [lv, name] of LEVELS) {
+      const list = PUZZLES.filter(p => p.level === lv);
+      box.appendChild(el('h2', '', name));
+      if (!list.length) { box.appendChild(el('p', 'emptyline', 'Coming soon.')); continue; }
+      const ul = box.appendChild(el('ul', 'puzzles'));
+      for (const p of list) {
+        const a = el('a', 'btn mode' + (done.has(p.id) ? ' solved' : ''));
+        a.href = '#/puzzle/' + p.id;
+        a.append(el('span', 'ic', done.has(p.id) ? '✓' : GLYPH.k + '︎'), el('span', '', p.title));
+        a.lastChild.appendChild(el('small', '', `${mateLabel(p)} · you play ${NAME[p.side]}${done.has(p.id) ? ' · solved' : ''}`));
+        ul.appendChild(el('li')).appendChild(a);
+      }
+    }
+  }
+
   // ---------- Chat ----------
   function chatState() {
     return {
@@ -1891,6 +2057,7 @@ a.btn { display: inline-block; text-decoration: none; }
   AI_LEVELS.evalbar = { nodes: 500, maxDepth: 8, noise: 0 };
   let evalKey = '', evalTimer = null, lastEval = null;
   function scheduleEval() {
+    if (V.mode === 'puzzle') return;
     const G = shownGame();
     const key = [V.mode, G.id, G.log.length, G.phase].join('|');
     if (key === evalKey) return;
@@ -2161,8 +2328,10 @@ a.btn { display: inline-block; text-decoration: none; }
       return;
     }
     if (name === 'login' || name === 'signup') { renderAuth(name); show(name); return; }
+    if (name === 'puzzle' && arg) { show('game'); startPuzzle(arg); return; }
+    if (name === 'puzzles' || name === 'extras') { renderPuzzleList(); show('puzzles'); return; }
     if (name === 'leaderboard') renderLeaderboard();
-    show(['leaderboard', 'how', 'extras'].includes(name) ? name : 'home');
+    show(['leaderboard', 'how'].includes(name) ? name : 'home');
   }
 
   // Header: Log in / Sign up, or "name (rating)" and Log out.
