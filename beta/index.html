@@ -1328,7 +1328,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       if (checkSq.includes(s)) cls.push('check');
       for (const t of G.trail) { if (t.ok && (t.from === s || t.to === s)) cls.push('trail'); if (!t.ok && t.from === s) cls.push('fizz'); }
       if (resolvingEntry && (resolvingEntry.from === s || resolvingEntry.to === s)) cls.push('sel');
-      if (p && G.phase === 'respond' && G.stack.some(e => e.pieceId === p.id)) cls.push('onstack');
+      if (p && G.phase === 'respond' && p.c === G.cur && myColors().includes(p.c) && G.stack.some(e => e.pieceId === p.id)) cls.push('onstack'); // only your own pieces: enemy pieces can still be taken
       const dead = V.preview && V.previewDead.find(d => d.sq === s);
       if (dead) cls.push('dies');
       el.className = cls.join(' ');
@@ -1868,7 +1868,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     { id: 'e2', level: 'easy', title: 'Lone rook', side: 'w', w: 'Ke8 Re4', b: 'Kh4', mate: 2.5 },
     { id: 'e3', level: 'easy', title: 'Cornered', side: 'w', w: 'Ka8', b: 'Kc8', stack: ['c8-b8'], mate: 2.5 },
     { id: 'e4', level: 'easy', title: 'Knight and bishop', side: 'w', w: 'Kb3 Nb1 Bg4', b: 'Kd1 b4', mate: 2.5 },
-    { id: 'e5', level: 'easy', title: 'Far corner', side: 'w', w: 'Kf3 Na1 Bf7', b: 'Ka2 f4', mate: 2.5 },
     { id: 'e6', level: 'easy', title: 'Waiting game', side: 'w', w: 'Kh7 Bh3', b: 'Kf5 b7', mate: 4 },
     { id: 'm1', level: 'medium', title: 'The pawn bites', side: 'w', w: 'Kg1 Ne3 g4', b: 'Kf5 Rg2', mate: 3.5 },
     { id: 'm3', level: 'medium', title: 'The pawn bites back', side: 'w', w: 'Kg1 Ne3 g4', b: 'Kf5 Rg2 a7', mate: 4 },

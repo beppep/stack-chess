@@ -11,7 +11,7 @@ On the site (beta/index.html, `PUZZLES`), each checked by the exact search:
 - m2 "Quiet queen": W Kh1 Qc1, B Kb8 (not attacked), White to move. From Bror's description; wins in 3, not 2; 3 first moves win (all king moves).
 - h1 "Only one way" (hard): W Kb1 Rg5, B Kc8 Pc5, White to move. Found by search: needs 4 turns, then Black must resolve (mate in 4.5); exactly one first move wins (Rg5xc5).
 - h2 "Knight watch" (hard): W Kb1 Rg5 Nb6, B Kc8 Pc5 Pe4, White to move. Found by adding pieces to h1: needs 4 turns, the last one a resolve (mate in 4); 2 first moves win (Rg8, Rxc5).
-- e4 "Knight and bishop": W Kb3 Nb1 Bg4, B Kd1 Pb4 (mate in 2.5; Kxb4 or Nd2). e5 "Far corner": W Kf3 Na1 Bf7, B Ka2 Pf4 (mate in 2.5; Kxf4 or Nc2).
+- e4 "Knight and bishop": W Kb3 Nb1 Bg4, B Kd1 Pb4 (mate in 2.5; Kxb4 or Nd2).
 - m4 "Rook lift": W Ke4 Rh3 Nf4 Pg3, B Kh5 Bb6 Pc3 (mate in 3; Nxh5 or Rxh5). m5 "Double attack": W Kb1 Rf7 Ng6 Pg4, B Ke7 Bb5 Pg3 (mate in 3; Rxe7 or Nxe7).
 - h3 "Crowded corner": W Kb1 Rg5 Nb6 Pa6, B Kc8 Pc5 Pe4 Nc1 (mate in 4; only Rg8).
 All found by search, labels checked with the page's counting.
