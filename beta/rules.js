@@ -205,6 +205,12 @@ function* resolveGen(G) {
   yield 'short';
   for (let i = G.stack.length - 1; i >= 0; i--) {
     const e = G.stack[i];
+    // The move of a captured piece just goes away, with no fizzle animation.
+    if (!G.st.board.some(p => p && p.id === e.pieceId)) {
+      e.state = 'gone';
+      G.log.push({ player: e.player, html: `<span class="m">${e.label}</span> is gone with its piece` });
+      continue;
+    }
     e.state = 'resolving';
     yield 'long';
     if (stillValid(G.st, e)) {
