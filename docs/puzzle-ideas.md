@@ -33,3 +33,8 @@ Open (2026-11-06):
    - White: King g1, Knight e3, Pawn g4
    - Black: King f5, Rook g2
    - Bror's note: the rook should try to take the pawn if the pawn takes the king. Mate in 3.5 (he thinks).
+
+Starting stacks (2026-11-06), all 13 puzzles checked solvable in their labeled turns:
+- m3 "The pawn bites back": stack g4xf5, Rg2xg4 (mate in 3; only Kxg2 wins first).
+- m5 "Double attack": stack Ng6xe7, Ke7-f6 (mate in 3; only Rf7-e7 wins first).
+- h3 "Crowded corner": W Kb1 Rg5 Nb6 Pa6, B Kc8 Pc5 Pa2 Nd2, stack Rg5xc5, Nd2-b3 (mate in 4.5; only resolve then a6-a7 wins first).
