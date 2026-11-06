@@ -482,7 +482,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         <li><b>Moving puts the move on the stack.</b> It shows as an arrow. Nothing on the board changes yet.</li>
         <li><b>Your opponent can respond</b> by spending their turn on a move of their own. It goes on top of the stack. Then you can respond to that, and so on.</li>
         <li><b>Or let it resolve.</b> The stack resolves from the top down: the last response first, the original move last. Then it's your normal turn.</li>
-        <li><b>Fizzle.</b> When a move resolves, its piece must still be on its starting square and able to reach the target square (nothing in the way, not your own piece on it). If not, nothing happens.</li>
+        <li><b>Fizzle.</b> If a move is illegal when it should resolve, it fizzles and nothing happens.</li>
         <li><b>One move per piece.</b> A piece that already has a move on the stack can't be given another one until the stack resolves. Those pieces are dimmed.</li>
         <li><b>No check rules.</b> You may move into check, leave your king attacked, or castle through attacked squares. You win by capturing the king, and your opponent can respond to save it. There is no checkmate.</li>
       </ul>
