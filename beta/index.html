@@ -383,6 +383,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 .online .label { margin: 4px 0 -4px; font-size: .78rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); display: block; }
 .online .note { margin: 0; font-size: .92rem; color: var(--muted); }
 #roomsBody .online { gap: 14px; }
+.roomsgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 280px); gap: 18px; align-items: start; }
+@media (max-width: 720px) { .roomsgrid { grid-template-columns: minmax(0, 1fr); } .roomsgrid > :last-child { order: -1; } }
 #roomsBody .games { max-height: none; }
 .online .note.warn { color: var(--amber); }
 .btnrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -1134,7 +1136,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   // ---------- Lobby: online count and the list of open rooms ----------
   // Every page keeps one lobby socket open. The server sends how many pages are connected and which
   // rooms wait for a second player. While we host a room nobody has joined, we announce it here.
-  const LOBBY = { ws: null, count: null, rooms: [], hosting: null, timer: null };
+  const LOBBY = { ws: null, count: null, rooms: [], hosting: null, color: 'random', timer: null };
   function renderCount() {
     const n = typeof LOBBY.count === 'number' ? Math.max(0, LOBBY.count - 1) : null; // not counting this page
     $('onlineCount').textContent = n === null ? '' : n + (n === 1 ? ' other player online' : ' other players online');
@@ -1610,7 +1612,27 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       row.appendChild(button('Cancel room', '', leaveGame));
       frag.appendChild(row);
     } else if (!NET.code) {
-      frag.appendChild(el('p', 'label', 'Open rooms'));
+      const left = el('div', 'panel online'), right = el('div', 'panel online');
+      frag.classList.add('roomsgrid');
+      frag.append(left, right);
+      right.appendChild(el('h2', '', 'Host a room'));
+      const clockRow = el('div', 'btnrow'), pick = clockSel.cloneNode(true);
+      pick.id = 'roomClock';
+      pick.value = clockSel.value;
+      pick.addEventListener('change', () => { clockSel.value = pick.value; clockSel.dispatchEvent(new Event('change')); });
+      clockRow.append(Object.assign(el('label', 'label', 'Clock'), { htmlFor: 'roomClock' }), pick);
+      right.appendChild(clockRow);
+      right.appendChild(el('p', 'label', 'You play'));
+      const colors = el('div', 'btnrow');
+      for (const [c, t] of [['random', 'Random'], ['w', 'White'], ['b', 'Black']]) {
+        colors.appendChild(button(t, LOBBY.color === c ? 'primary' : '', () => { LOBBY.color = c; renderOnline(); }));
+      }
+      right.appendChild(colors);
+      right.appendChild(button('Host room', 'primary', () => {
+        const color = LOBBY.color === 'random' ? (Math.random() < 0.5 ? 'w' : 'b') : LOBBY.color;
+        openGame(randomCode(), { create: true, color });
+      }));
+      left.appendChild(el('p', 'label', 'Open rooms'));
       const list = el('ul', 'games');
       for (const r of LOBBY.rooms) {
         const li = el('li'), info = el('div', 'ginfo'), top = el('div', 'gtop');
@@ -1623,24 +1645,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         list.appendChild(li);
       }
       if (!LOBBY.rooms.length) list.appendChild(el('li', 'empty', LOBBY.ws ? 'No open rooms right now. Host one!' : 'Cannot reach the game server. Retrying…'));
-      frag.appendChild(list);
-      frag.appendChild(el('p', 'label', 'Host a room'));
-      frag.appendChild(nameRow('Your name'));
-      const clockRow = el('div', 'btnrow'), pick = clockSel.cloneNode(true);
-      pick.id = 'roomClock';
-      pick.value = clockSel.value;
-      pick.addEventListener('change', () => { clockSel.value = pick.value; clockSel.dispatchEvent(new Event('change')); });
-      clockRow.append(Object.assign(el('label', 'label', 'Clock'), { htmlFor: 'roomClock' }), pick);
-      frag.appendChild(clockRow);
-      const row = el('div', 'btnrow');
-      for (const [c, t] of [['w', 'White'], ['b', 'Black'], ['random', 'Random']]) {
-        row.appendChild(button(t, '', () => {
-          const color = c === 'random' ? (Math.random() < 0.5 ? 'w' : 'b') : c;
-          openGame(randomCode(), { create: true, color });
-        }));
-      }
-      frag.appendChild(row);
-      note(ACCT ? 'Rated when both players are logged in and there is a clock.' : 'You can play as a guest. Log in to play rated games.');
+      left.appendChild(list);
       const form = el('form', 'joinrow');
       form.innerHTML = '<label for="codeInput" class="label">Join with a code</label><div class="btnrow"><input id="codeInput" autocomplete="off" spellcheck="false" maxlength="6" placeholder="K7QF2M"><button class="btn small" type="submit">Join</button></div>';
       form.addEventListener('submit', e => {
@@ -1649,11 +1654,11 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         if (/^[A-Z0-9]{6}$/.test(v)) openGame(v);
         else { NET.note = 'A game code is 6 letters and digits, like K7QF2M.'; renderOnline(); }
       });
-      frag.appendChild(form);
-      note(NET.note, 'warn');
+      left.appendChild(form);
+      if (NET.note) left.appendChild(el('p', 'note warn', NET.note));
       const recent = (store.get('recent') || []).map(code => [code, store.get('game-' + code)]).filter(([, g]) => g);
       if (recent.length) {
-        frag.appendChild(el('p', 'label', 'Your recent games'));
+        left.appendChild(el('p', 'label', 'Your recent games'));
         const ul = el('ul', 'games');
         for (const [code, g] of recent) {
           const li = el('li');
@@ -1674,7 +1679,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
           li.append(info, button('Open', '', () => openGame(code)));
           ul.appendChild(li);
         }
-        frag.appendChild(ul);
+        left.appendChild(ul);
       }
     } else {
       frag.appendChild(el('h2', '', 'Game ' + NET.code));
