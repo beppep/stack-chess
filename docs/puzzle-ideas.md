@@ -13,7 +13,7 @@ Replace the guesses with Bror's exact positions when he gives them.
 
 Open (2026-11-06):
 - Knight + rook + far pawn, White to move: no position of that kind found that White wins within 3 moves (~2,000 tried).
-- The pawn bites + one black pawn: on 39 squares it stays mate in 3.5, on d4/f4/f2/h2/h5 no win within 4. Bror expected "mate in 4 because you must resolve": asked whether a resolve should count as a move in puzzles (now it is free).
+- Counting (Bror, 2026-11-06): resolving is part of your turn, so a turn that only resolves still counts. "Mate in N.5" = after N turns the defender must resolve and lose; "mate in N" = you resolve on turn N to win. With that, The pawn bites + a far black pawn (a7) is mate in 4 → added as m3 "The pawn bites back".
 
 ## Easy
 
