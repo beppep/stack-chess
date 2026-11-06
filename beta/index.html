@@ -1341,11 +1341,11 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     $('undoBtn').hidden = V.mode === 'online' || V.mode === 'replay' || V.mode === 'puzzle';
     $('replayBtn').hidden = V.mode === 'replay' || V.mode === 'puzzle' || !real.acts.length;
     $('puzzlePanel').hidden = V.mode !== 'puzzle';
-    $('evalbar').hidden = V.mode === 'puzzle'; // it would give the answer away
     $('replayPanel').hidden = V.mode !== 'replay';
     if (V.mode === 'replay') renderReplay();
     $('undoBtn').disabled = V.busy || CPU.thinking || !undoEntry();
     $('cpuPanel').hidden = V.mode !== 'cpu';
+    $('evalbar').hidden = V.mode !== 'cpu';
     $('modeCpu').setAttribute('aria-selected', V.mode === 'cpu');
     $('onlinePanel').hidden = V.mode !== 'online';
     renderArrows(G);
@@ -2084,7 +2084,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   AI_LEVELS.evalbar = { nodes: 500, maxDepth: 8, noise: 0 };
   let evalKey = '', evalTimer = null, lastEval = null;
   function scheduleEval() {
-    if (V.mode === 'puzzle') return;
+    if (V.mode !== 'cpu') return;
     const G = shownGame();
     const key = [V.mode, G.id, G.log.length, G.phase].join('|');
     if (key === evalKey) return;
