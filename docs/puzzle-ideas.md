@@ -8,7 +8,7 @@ On the site (beta/index.html, `PUZZLES`), each checked by the exact search:
 - e2 "Lone rook": W Ke8 Re4, B Kh4, White to move. Claude's guess at idea 2; wins in 2, not 1; only the 5 king moves win first.
 - m1 "The pawn bites": idea 3 below, White to move; wins in 3, not 2; 14 first moves win.
 - e3 "Cornered": W Ka8, B Kc8 with Kc8–b8 already on the stack, White to respond. From Bror's description; every such corner position is exactly mate in 2.5; here 2 first moves win (Ka7, Kb7).
-- m2 "Quiet queen": W Kh1 Qc1, B Kd7 (not attacked), White to move. From Bror's description; wins in 3, not 2; 3 first moves win (all king moves).
+- m2 "Quiet queen": W Kh1 Qc1, B Kd6 (not attacked), White to move. From Bror's description; wins in 3, not 2; 3 first moves win (all king moves).
 - h1 "Only one way" (hard): W Kb1 Rg5, B Kc8 Pc5, White to move. Found by search: needs 4 turns, then Black must resolve (mate in 4.5); exactly one first move wins (Rg5xc5).
 - h2 "Knight watch" (hard): W Kb1 Rg5 Nb6, B Kc8 Pc5 Pe4, White to move. Found by adding pieces to h1: needs 4 turns, the last one a resolve (mate in 4); 2 first moves win (Rg8, Rxc5).
 - e4 "Knight and bishop": W Kb3 Nb1 Bg4, B Kd1 Pb4 (mate in 2.5; Kxb4 or Nd2).
