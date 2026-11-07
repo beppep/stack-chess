@@ -187,6 +187,10 @@ body.tut .status-main { font-family: inherit; font-weight: 500; font-size: 1.45r
 body.tut .status .status-text { flex: 1 1 260px; }
 body.tut .status .btnrow { flex: none; }
 body.tut .status .btn.primary { min-width: 170px; min-height: 76px; padding: 14px 32px; font-size: 1.6rem; }
+#view-tutdone { text-align: center; margin-top: 8vh; }
+#view-tutdone p { font-size: 1.45rem; }
+.tutbtns { display: flex; flex-direction: column; gap: 14px; max-width: 360px; margin: 32px auto 0; }
+.tutbtns .btn { display: flex; align-items: center; justify-content: center; min-height: 76px; font-size: 1.4rem; }
 .board.six { grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, 1fr); }
 .board.six .sq.off { display: none; }
 .board.six .pc { font-size: 12.8cqw; }
@@ -513,6 +517,16 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         <li><b>One move per piece.</b> A piece that already has a move on the stack can't be given another one until the stack resolves. Those pieces are dimmed.</li>
         <li><b>No check rules.</b> You may move into check, leave your king attacked, or castle through attacked squares. You win by capturing the king, and your opponent can respond to save it. There is no checkmate.</li>
       </ul>
+    </div>
+  </main>
+
+  <main class="page view" id="view-tutdone" hidden>
+    <h1>That’s the game!</h1>
+    <p>There are no check rules. You win by capturing the king!</p>
+    <div class="tutbtns">
+      <a class="btn primary" href="#/puzzles">Try the easy puzzles</a>
+      <a class="btn" href="#/">Main menu</a>
+      <button class="btn" id="tutAgain" type="button">Start over</button>
     </div>
   </main>
 
@@ -1456,13 +1470,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       s.innerHTML = text(TUT.say, '');
       if (st.next) { const row = el('div', 'btnrow'); row.appendChild(button(st.next, 'primary', tutNext)); s.appendChild(row); }
       if (st.opp && st.say && !TUT.going) { const row = el('div', 'btnrow'); row.appendChild(button('OK', 'primary', tutOpp)); s.appendChild(row); }
-      if (st.end) {
-        const row = el('div', 'btnrow');
-        row.appendChild(button('Try the easy puzzles', 'primary', () => go('#/puzzles')));
-        row.appendChild(button('Start over', '', startTutorial));
-        row.appendChild(button('All the rules', '', () => go('#/rules')));
-        s.appendChild(row);
-      }
       return;
     }
 
@@ -1973,7 +1980,12 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     { board: { w: 'Nf4 d3', b: 'Ra4', stack: ['a4-f4'] }, you: 'd3-d4', say: 'Black\u2019s rook is trying to capture your knight. That move is already on the stack. Block it with your pawn.' },
     { opp: 'resolve', say: 'Your pawn\u2019s move is on top of the stack, so it goes first. Black lets it resolve.' },
     { next: 'Next', say: 'The pawn got in the way. A move that is illegal when it should resolve fizzles, and nothing happens.' },
-    { end: true, say: 'That\u2019s the game! You win by capturing the king. There is no check or checkmate, so your opponent can always try to answer. Try some easy puzzles next.' }
+    { board: { w: 'Rb2 Re5', b: 'Ne2' }, you: 'b2-e2', say: 'Both your rooks attack the knight. Try to capture it.' },
+    { opp: 'e2-d4', wait: 500 },
+    { you: 'e5-e2', say: 'Black responds by moving the knight. Capture it first with your other rook.' },
+    { opp: 'resolve', wait: 700 },
+    { next: 'Next', say: 'Nice! By attacking with 2 pieces you can capture a piece.' },
+    { end: true }
   ];
   const TUT = { i: 0, G: freshGame(), six: false, say: '', going: false };
   const tutStep = () => TUTORIAL[TUT.i];
@@ -1988,6 +2000,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   }
   function tutRun() {
     const s = tutStep();
+    if (s.end) { show('tutdone'); return; }
     if (s.board !== undefined) {
       TUT.G = s.board ? puzzleGame({ ...s.board, side: 'w' }) : freshGame(null);
       TUT.six = !!s.board;
@@ -2007,6 +2020,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     TUT.going = false;
     if (G === TUT.G) tutNext();
   }
+  document.getElementById('tutAgain').addEventListener('click', () => { show('game'); startTutorial(); });
   function startTutorial() {
     if (V.busy) { setTimeout(startTutorial, 200); return; }
     TUT.i = 0;
