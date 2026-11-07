@@ -71,16 +71,16 @@ body {
 a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-radius: 4px; }
 
 /* Home */
-.hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px); gap: 48px; align-items: center; max-width: 1100px; width: 100%; margin: 40px auto 0; }
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, min(360px, 62vh)); gap: 40px; align-items: center; max-width: 900px; width: 100%; margin: 16px auto 0; }
 @media (max-width: 820px) { .hero { grid-template-columns: minmax(0, 1fr); gap: 28px; margin-top: 16px; } }
-.hero h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.8rem, 4vw, 2.6rem); line-height: 1.15; margin: 0 0 12px; text-wrap: balance; }
+.hero h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.5rem, 3vw, 2rem); line-height: 1.15; margin: 0 0 12px; text-wrap: balance; }
 .lead { color: var(--muted); font-size: 1.12rem; margin: 0 0 8px; max-width: 34em; }
 .howlink { color: var(--amber); font-weight: 700; text-decoration: none; }
 .howlink:hover { text-decoration: underline; }
-.modes { display: flex; flex-direction: column; gap: 10px; margin-top: 28px; max-width: 360px; }
-.btn.mode { display: flex; align-items: center; gap: 14px; text-align: left; padding: 14px 18px; font-size: 1.12rem; }
-.mode small { display: block; font-weight: 400; font-size: .9rem; opacity: .75; }
-.mode .ic { font-family: var(--font-glyph); font-size: 1.6rem; width: 1.6rem; text-align: center; font-weight: 400; }
+.modes { display: flex; flex-direction: column; gap: 7px; margin-top: 16px; max-width: 320px; }
+.btn.mode { display: flex; align-items: center; gap: 12px; text-align: left; padding: 8px 14px; font-size: 1rem; }
+.mode small { display: block; font-weight: 400; font-size: .82rem; opacity: .75; }
+.mode .ic { font-family: var(--font-glyph); font-size: 1.35rem; width: 1.35rem; text-align: center; font-weight: 400; }
 .online-count { color: var(--muted); font-size: .9rem; margin-top: -4px; }
 .online-count:empty { display: none; }
 .logged-in .btn.mode.how { order: 1; } /* How to play comes first for newcomers, last once logged in */
@@ -508,7 +508,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   <main class="hero view" id="view-home" hidden>
     <div>
       <h1>Chess where every move can be answered before it happens</h1>
-      <p class="lead">Moves go on a stack. Your opponent can respond on top, you can respond to that, and then it all resolves from the top down.</p>
       <div class="modes">
         <a class="btn mode how" href="#/how"><span class="ic">?</span><span>How to play<small>The stack in two minutes</small></span></a>
         <a class="btn primary mode" href="#/local"><span class="ic">♟︎</span><span>Local versus<small>Two players, one screen</small></span></a>
