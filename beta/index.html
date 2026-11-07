@@ -1357,7 +1357,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       const cls = ['sq', (r + c) % 2 ? 'dark' : 'light'];
       if (V.sel === s) cls.push('sel');
       if (six && (r < 2 || c > 5)) cls.push('off');
-      if (typeof step.you === 'string' && V.sel === null && !V.busy && sqName(s) === step.you.slice(0, 2)) cls.push('guide');
+      if (step.you && step.you !== true && V.sel === null && legalNow.some(m => m.from === s)) cls.push('guide');
       if (targets.has(s)) { cls.push('target'); if (p || targets.get(s).flag === 'ep') cls.push('capture'); }
       if (checkSq.includes(s)) cls.push('check');
       for (const t of V.sel === null ? G.trail : []) { if (t.ok && (t.from === s || t.to === s)) cls.push('trail'); if (!t.ok && t.from === s) cls.push('fizz'); }
@@ -1960,7 +1960,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 
   // ---------- Tutorial ----------
   // One step at a time. board: starts a position (null is the normal start, an object a small 6x6 one).
-  // you: wait for a move (true for any, or the one move). opp: Black plays, or lets it resolve, once
+  // you: wait for a move (true for any, or the allowed moves). opp: Black plays, or lets it resolve, once
   // you press OK on its text. A step without text just keeps the last text and plays after wait.
   // resolve: wait for the button, which only shows here. next: wait for a button with this text.
   const TUTORIAL = [
@@ -1980,9 +1980,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     { board: { w: 'Nf4 d3', b: 'Ra4', stack: ['a4-f4'] }, you: 'd3-d4', say: 'Black\u2019s rook is trying to capture your knight. That move is already on the stack. Block it with your pawn.' },
     { opp: 'resolve', say: 'Your pawn\u2019s move is on top of the stack, so it goes first. Black lets it resolve.' },
     { next: 'Next', say: 'The pawn got in the way. A move that is illegal when it should resolve fizzles, and nothing happens.' },
-    { board: { w: 'Rb2 Re5', b: 'Ne2' }, you: 'b2-e2', say: 'Both your rooks attack the knight. Try to capture it.' },
+    { board: { w: 'Rb2 Re5', b: 'Ne2' }, you: ['b2-e2', 'e5-e2'], say: 'Both your rooks attack the knight. Try to capture it.' },
     { opp: 'e2-d4', wait: 500 },
-    { you: 'e5-e2', say: 'Black responds by moving the knight. Capture it first with your other rook.' },
+    { you: ['b2-e2', 'e5-e2'], say: 'Black responds by moving the knight. Capture it first with your other rook.' },
     { opp: 'resolve', wait: 700 },
     { next: 'Next', say: 'Nice! By attacking with 2 pieces you can capture a piece.' },
     { end: true }
@@ -1991,7 +1991,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   const tutStep = () => TUTORIAL[TUT.i];
   const tutMoves = moves => {
     const s = tutStep();
-    return s.you === true ? moves : moves.filter(m => sqName(m.from) + '-' + sqName(m.to) === s.you);
+    return s.you === true ? moves : moves.filter(m => [].concat(s.you).includes(sqName(m.from) + '-' + sqName(m.to)));
   };
   function tutNext() {
     if (V.mode !== 'tutorial' || TUT.i >= TUTORIAL.length - 1) return;
