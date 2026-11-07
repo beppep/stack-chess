@@ -167,8 +167,8 @@ body.ingame[data-short].tut .status .btn.primary { min-height: 40px; font-size: 
   flex: none; width: 34px; height: 34px; border-radius: 50%;
   display: grid; place-items: center; font-family: var(--font-glyph); font-size: 24px; line-height: 1;
 }
-.chip.w { background: var(--piece-w); color: var(--piece-w-edge); box-shadow: 0 0 0 3px var(--amber); }
-.chip.b { background: var(--piece-b); color: var(--piece-b-edge); box-shadow: 0 0 0 3px var(--teal); }
+.chip.w { background: var(--sq-dark); color: var(--piece-w); -webkit-text-stroke: 1px var(--piece-w-edge); paint-order: stroke fill; box-shadow: 0 0 0 3px var(--amber); }
+.chip.b { background: var(--sq-light); color: var(--piece-b); box-shadow: 0 0 0 3px var(--teal); }
 .status-text { min-width: 0; }
 .status-main { font-family: var(--font-display); font-weight: 700; font-size: 1.08rem; letter-spacing: 0.03em; }
 .status-sub { color: var(--muted); font-size: 0.95rem; }
@@ -1574,7 +1574,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     } else if (G.phase === 'respond') {
       main = `${NAME[c]}: respond or let it resolve`;
       sub = availableMoves(G).length
-        ? `${NAME[top.player]} put <b>${top.label}</b> on the stack. Move a piece to respond, or resolve the stack.`
+        ? `${NAME[top.player]} put <b>${top.label}</b> on the stack.`
         : 'You have no legal response. Let the stack resolve.';
     } else if (G.phase === 'resolving') {
       main = 'Resolving the stack';
