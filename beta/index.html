@@ -109,11 +109,13 @@ a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-rad
 .board-col { grid-area: board; min-width: 0; }
 .stackcol { grid-area: stack; display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; overflow: hidden; }
 .stackcol > .panel { min-height: 0; overflow: auto; flex: 0 1 auto; }
-.stackcol > .status, .stackcol > .clocks, .stackcol > .banner { flex: none; }
+.stackcol > .status, .stackcol > .clocks { flex: none; }
 .stackcol .stack { margin-top: 12px; }
-/* Only the list of moves scrolls: the resolve button above it stays put */
-.stackcol > .panel:not(.chat) { display: flex; flex-direction: column; }
-.stackcol > .panel:not(.chat) > .stack { flex: 0 1 auto; min-height: 80px; overflow-y: auto; scrollbar-width: thin; }
+/* Only the list of moves scrolls. The heading and buttons above it never move. */
+html[data-layout="land"] .stackcol > .panel:not(.chat) { display: flex; flex-direction: column; flex: 1 1 0; overflow: hidden; }
+html[data-layout="land"] .stackcol > .panel:not(.chat) > :not(.stack) { flex: none; }
+html[data-layout="land"] .stackcol > .panel:not(.chat) > .stack { flex: 1 1 0; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+html[data-layout="land"] .stackcol > .chat { flex: 1 1 0; }
 .stackcol { container-type: inline-size; }
 @container (max-width: 262px) { .card .pill { display: none; } }
 .side { grid-area: side; min-height: 0; overflow: hidden auto; }
@@ -129,7 +131,7 @@ body.ingame[data-short] .nav, body.ingame[data-short] .account { display: none; 
 body.ingame[data-short] .site { position: absolute; top: 4px; }
 body.ingame[data-short] .logo { font-size: 1rem; }
 body.ingame[data-short] .status { margin-top: 24px; min-height: 0; padding: 6px 8px; }
-body.ingame[data-short] .status-sub, body.ingame[data-short] .stackcol h2, body.ingame[data-short] .stackcol .hint, body.ingame[data-short] #previewBtn { display: none; }
+body.ingame[data-short] .stackcol h2, body.ingame[data-short] #previewBtn { display: none; }
 body.ingame[data-short] .status-main { font-size: .9rem; }
 body.ingame[data-short] #resolveBtn { min-height: 40px; font-size: .95rem; padding: 6px; }
 body.ingame[data-short] .panel { padding: 8px; }
@@ -140,17 +142,16 @@ html[data-layout="tall"] .table { display: flex; flex-direction: column; gap: 8p
 html[data-layout="tall"] .stackcol { display: contents; }
 html[data-layout="tall"] .status { order: 1; }
 html[data-layout="tall"] .clocks { order: 2; }
-html[data-layout="tall"] .banner { order: 3; }
 html[data-layout="tall"] .board-col { order: 4; }
 html[data-layout="tall"] .boardrow { width: var(--board, 100%); max-width: 100%; margin-inline: auto; }
 html[data-layout="tall"] .stackcol > .panel { order: 5; overflow: visible; }
 html[data-layout="tall"] .stackcol > .chat { order: 6; }
 html[data-layout="tall"] .side { order: 8; overflow: visible; }
-html[data-layout="tall"] .stackcol > .panel:not(.chat) { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; padding: 8px; }
-html[data-layout="tall"] .stackcol h2, html[data-layout="tall"] .stackcol .hint { display: none; }
+html[data-layout="tall"] .stackcol > .panel:not(.chat) { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; }
+html[data-layout="tall"] .stackcol h2 { display: none; }
 html[data-layout="tall"] #resolveBtn { flex: 2 1 0; width: auto; min-height: 56px; }
 html[data-layout="tall"] #previewBtn { flex: 1 1 0; }
-html[data-layout="tall"] .stackcol > .panel:not(.chat) > .stack { width: 100%; margin-top: 0; min-height: 0; overflow: visible; }
+html[data-layout="tall"] .stackcol .stack { width: 100%; margin-top: 0; }
 html[data-layout="tall"] body.ingame { padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); padding-top: 8px; }
 html[data-layout="tall"] body.ingame .app { gap: 8px; }
 html[data-layout="tall"] body.tut .status { min-height: 150px; }
@@ -176,7 +177,7 @@ body.ingame[data-short].tut .status .btn.primary { min-height: 40px; font-size: 
 .chip.b { background: var(--sq-light); color: var(--piece-b); box-shadow: 0 0 0 3px var(--teal); }
 .status-text { min-width: 0; }
 .status-main { font-family: var(--font-display); font-weight: 700; font-size: 1.08rem; letter-spacing: 0.03em; }
-.status-sub { color: var(--muted); font-size: 0.95rem; }
+.status.over { border-color: var(--sel); background: color-mix(in srgb, var(--sel) 12%, var(--panel)); }
 
 /* Board */
 .boardrow { display: flex; gap: 10px; align-items: stretch; }
@@ -231,7 +232,7 @@ body.ingame[data-short].tut .status .btn.primary { min-height: 40px; font-size: 
   box-shadow: inset 0 0 0 0.9cqw rgba(20, 16, 30, .38);
 }
 /* Tutorial: only the board, the words and the stack */
-body.tut .controls, body.tut .side, body.tut #previewBtn, body.tut .stackcol .hint { display: none; }
+body.tut .controls, body.tut .side, body.tut #previewBtn { display: none; }
 body.tut-nostack .stackcol > .panel { visibility: hidden; }
 body.tut .status { flex-wrap: wrap; justify-content: space-between; min-height: 84px; }
 body.tut .status-main { font-family: inherit; font-weight: 500; font-size: 1.45rem; line-height: 1.35; letter-spacing: 0; }
@@ -365,7 +366,6 @@ a.btn { display: inline-block; text-decoration: none; }
 /* Computer panel */
 .cpu { display: flex; flex-direction: column; gap: 10px; }
 .cpu h2 { margin: 0; }
-.cpu .hint { margin: 0; }
 .cpu .label { margin: 4px 0 -4px; font-size: .78rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
 
 /* Log in / sign up */
@@ -411,11 +411,11 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 /* Chess clock */
 .clocks { display: flex; gap: 10px; }
 .clk {
-  flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px;
+  flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px;
 }
 .clk .who { font-size: .8rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
-.clk .t { margin-left: auto; font-family: var(--font-mono); font-weight: 600; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+.clk .t { font-family: var(--font-mono); font-weight: 600; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
 .clk.active.w { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
 .clk.active.b { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
 .clk:not(.active) .t { opacity: .6; }
@@ -481,12 +481,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 .chip.small.w { box-shadow: 0 0 0 2px var(--amber); }
 .chip.small.b { box-shadow: 0 0 0 2px var(--teal); }
 
-.banner[hidden] { display: none !important; }
-.banner {
-  text-align: center; padding: 14px; border-radius: 10px; border: 1px solid var(--sel);
-  background: color-mix(in srgb, var(--sel) 10%, var(--panel));
-}
-.banner .big { font-family: var(--font-display); font-weight: 700; font-size: 1.4rem; letter-spacing: .05em; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -581,10 +575,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         <div class="clk w" id="clockW"><span class="who">White</span><span class="t"></span></div>
         <div class="clk b" id="clockB"><span class="who">Black</span><span class="t"></span></div>
       </div>
-      <div class="banner" id="banner" hidden></div>
       <div class="panel">
         <h2>The stack</h2>
-        <p class="hint">Number 1 resolves first. A move that is no longer possible fizzles.</p>
         <button class="btn primary" id="resolveBtn" type="button" disabled>Let it resolve</button>
         <button class="btn" id="previewBtn" type="button" disabled>Hold to preview</button>
         <ol class="stack" id="stack"></ol>
@@ -656,7 +648,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
           <button class="btn small" type="button" data-l="normal">Normal</button>
           <button class="btn small" type="button" data-l="hard">Hard</button>
         </div>
-        <p class="hint">Picking a side starts a new game. The computer looks a few moves and responses ahead and counts material.</p>
       </div>
 
       <div class="panel" id="puzzlePanel" hidden>
@@ -1527,22 +1518,24 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     });
   }
 
+  // One line of text. Everything else about the game is on the board, the stack and the log.
   function renderStatus(G) {
-    const s = $('status'), banner = $('banner');
+    const s = $('status');
     const chip = c => `<span class="chip ${c}">${GLYPH.k}︎</span>`;
-    const text = (main, sub) => `<div class="status-text"><div class="status-main">${main}</div>${sub ? `<div class="status-sub">${sub}</div>` : ''}</div>`;
+    const text = main => `<div class="status-text"><div class="status-main">${main}</div></div>`;
     const c = G.cur;
     const rb = $('resolveBtn');
     const online = V.mode === 'online';
+    const turn = () => (G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`);
     rb.disabled = !(canAct() && G.phase === 'respond');
     rb.classList.toggle('b', c === 'b');
     rb.textContent = G.phase === 'resolving' ? 'Resolving…' : (G.phase === 'respond' ? `${NAME[c]}: let it resolve` : 'Let it resolve');
     rb.hidden = V.mode === 'tutorial' && !tutStep().resolve;
+    s.classList.remove('over');
     if (V.mode === 'tutorial') {
       const st = tutStep();
       if (st.resolve && G.phase !== 'resolving') rb.textContent = 'Let it resolve';
-      banner.hidden = true;
-      s.innerHTML = text(TUT.say, '');
+      s.innerHTML = text(TUT.say);
       if (st.next) { const row = el('div', 'btnrow'); row.appendChild(button(st.next, 'primary', tutNext)); s.appendChild(row); }
       if (st.opp && st.say && !TUT.going) { const row = el('div', 'btnrow'); row.appendChild(button('OK', 'primary', tutOpp)); s.appendChild(row); }
       return;
@@ -1550,74 +1543,40 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 
     if (G.phase === 'over' && (!online || NET.code)) {
       const w = G.result.winner;
-      s.innerHTML = (w ? chip(w) : '') + text(G.result.text, V.mode === 'replay' ? `Replay: action ${REP.pos} of ${REP.acts.length}.` : online ? 'Start a rematch from the Online panel.'
-        : V.mode === 'puzzle' ? (w === PZ.p.side ? 'Puzzle solved.' : 'Try the puzzle again.') : 'Start a new game to play again.');
-      banner.hidden = false;
-      banner.innerHTML = `<div class="big">${w ? NAME[w] + ' wins' : G.result.aborted ? 'Aborted' : 'Draw'}</div><div class="status-sub">${G.result.text}.</div>`;
+      const said = V.mode === 'puzzle' ? (w === PZ.p.side ? 'Solved!' : 'Not this time')
+        : w ? NAME[w] + ' wins' : G.result.aborted ? 'Aborted' : 'Draw';
+      s.classList.add('over');
+      s.innerHTML = (w ? chip(w) : '') + text(said);
       return;
     }
-    banner.hidden = true;
-    if (V.mode === 'replay' && G.phase !== 'resolving') {
-      s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`,
-        `Replay: action ${REP.pos} of ${REP.acts.length}. Step through it with the arrow keys or the Replay panel.`);
-      return;
-    }
-    if (online && !NET.code) { s.innerHTML = chip('w') + text('Online play', 'Create a game or join one from the Online panel.'); return; }
+    if (V.mode === 'replay' && G.phase !== 'resolving') { s.innerHTML = chip(c) + text(turn()); return; }
+    if (online && !NET.code) { s.innerHTML = chip('w') + text('Online play'); return; }
     if (online && !NET.connected && !(NET.open && NET.watching)) {
-      const waiting = NET.open && !NET.ready;
-      s.innerHTML = chip(NET.role ? myColor() : 'w') + text(
-        waiting ? 'Waiting for your opponent' : 'Not connected',
-        NET.status || (waiting ? (NET.role === 'host' ? 'Send them the invite link from the Online panel.' : 'Waiting for the other player to arrive.')
-                               : 'Connecting…'));
+      s.innerHTML = chip(NET.role ? myColor() : 'w') + text(NET.open && !NET.ready ? 'Waiting for your opponent' : 'Not connected');
       return;
     }
-    if (online && NET.watching && G.phase !== 'resolving') {
-      s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`, 'You are watching this game.');
-      return;
-    }
-    if (online && !myColors().includes(c) && G.phase !== 'resolving') {
-      const sub = G.phase === 'respond'
-        ? `${nameOfColor(c) || 'Your opponent'} is deciding whether to respond to ${G.stack[G.stack.length - 1].label}.`
-        : '';
-      s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`, sub ? ' ' : '');
-      if (sub) s.querySelector('.status-sub').textContent = sub; // the name is user-provided: no HTML
-      return;
-    }
+    if (online && (NET.watching || !myColors().includes(c)) && G.phase !== 'resolving') { s.innerHTML = chip(c) + text(turn()); return; }
     if (V.mode === 'puzzle' && PZ.state !== 'play' && !V.busy) {
-      s.innerHTML = chip(PZ.p.side) + text(PZ.state === 'solved' ? 'Solved!' : 'Not this time', PZ.state === 'solved'
-        ? 'You captured the king in time.' : `${NAME[other(PZ.p.side)]} survived your ${turnsOf(PZ.p)} turns. Try again.`);
+      s.innerHTML = chip(PZ.p.side) + text(PZ.state === 'solved' ? 'Solved!' : 'Not this time');
       return;
     }
     if (V.mode === 'puzzle' && c !== PZ.p.side && G.phase !== 'resolving' && G.phase !== 'over') {
-      s.innerHTML = chip(c) + text(PZ.thinking ? 'The computer is defending…' : `${NAME[c]} (computer) defends`,
-        G.phase === 'respond' ? `Deciding whether to respond to ${G.stack[G.stack.length - 1].label}.` : '');
+      s.innerHTML = chip(c) + text(PZ.thinking ? 'The computer is defending…' : `${NAME[c]} (computer) defends`);
       return;
     }
     if (V.mode === 'cpu' && c === CPU.color && G.phase !== 'resolving') {
-      s.innerHTML = chip(c) + text(CPU.thinking ? 'Computer is thinking…' : `${NAME[c]} (computer)`,
-        G.phase === 'respond' ? `Deciding whether to respond to ${G.stack[G.stack.length - 1].label}.` : 'Choosing a move.');
+      s.innerHTML = chip(c) + text(CPU.thinking ? 'Computer is thinking…' : `${NAME[c]} (computer)`);
       return;
     }
-    const top = G.stack[G.stack.length - 1];
-    let main = '', sub = '';
-    if (G.phase === 'move') {
-      main = online ? `Your move (${NAME[c]})` : `${NAME[c]} to move`;
-    } else if (G.phase === 'respond') {
-      main = `${NAME[c]}: respond or let it resolve`;
-      sub = availableMoves(G).length
-        ? `${NAME[top.player]} put <b>${top.label}</b> on the stack.`
-        : 'You have no legal response. Let the stack resolve.';
-    } else if (G.phase === 'resolving') {
-      main = 'Resolving the stack';
-      sub = 'Top card first, original move last.';
-    }
-    s.innerHTML = chip(c) + text(main, sub);
+    const main = G.phase === 'move' ? (online ? `Your move (${NAME[c]})` : `${NAME[c]} to move`)
+      : G.phase === 'respond' ? `${NAME[c]}: respond or let it resolve` : 'Resolving the stack';
+    s.innerHTML = chip(c) + text(main);
   }
 
   let stackShown = '', stackLen = 0;
   function renderStack(G) {
     const ol = $('stack');
-    if (!G.stack.length) { ol.innerHTML = '<li class="empty">Empty. The next move goes here.</li>'; stackShown = ''; return; }
+    if (!G.stack.length) { ol.innerHTML = '<li class="empty">Empty</li>'; stackShown = ''; return; }
     const items = [];
     for (let i = G.stack.length - 1; i >= 0; i--) {
       const e = G.stack[i];
@@ -1645,7 +1604,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 
   function renderLog(G) {
     const ol = $('log');
-    if (!G.log.length) { ol.innerHTML = '<li class="empty">No moves yet. White starts.</li>'; return; }
+    if (!G.log.length) { ol.innerHTML = '<li class="empty">No moves yet</li>'; return; }
     ol.innerHTML = G.log.map((e, i) => {
       if (e.sep) return i === 0 ? '' : '<li class="sep" aria-hidden="true"></li>';
       return `<li><span class="dot ${e.player}"></span><span>${e.html}</span></li>`;
@@ -1761,7 +1720,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       pick.addEventListener('change', () => { clockSel.value = pick.value; clockSel.dispatchEvent(new Event('change')); renderOnline(); });
       clockRow.append(Object.assign(el('label', 'label', 'Clock'), { htmlFor: 'roomClock' }), pick);
       right.appendChild(clockRow);
-      if (clockSel.value === 'off') right.appendChild(el('p', 'hint', ACCT ? 'No time limit. Close the page and come back whenever you like.' : 'No time limit. Log in to keep your games in one place.'));
       right.appendChild(el('p', 'label', 'You play'));
       const colors = el('div', 'btnrow');
       for (const [c, t] of [['random', 'Random'], ['w', 'White'], ['b', 'Black']]) {
