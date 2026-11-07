@@ -186,6 +186,7 @@ body.tut .status { flex-wrap: wrap; justify-content: space-between; min-height: 
 body.tut .status-main { font-family: inherit; font-weight: 500; font-size: 1.45rem; line-height: 1.35; letter-spacing: 0; }
 body.tut .status .status-text { flex: 1 1 260px; }
 body.tut .status .btnrow { flex: none; }
+body.tut .status .btn.primary { min-width: 170px; min-height: 76px; padding: 14px 32px; font-size: 1.6rem; }
 .board.six { grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, 1fr); }
 .board.six .sq.off { display: none; }
 .board.six .pc { font-size: 12.8cqw; }
@@ -1962,7 +1963,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     { opp: 'g8-f6', wait: 500 },
     { resolve: true, say: 'Nothing has happened on the board yet. Try the resolve button.' },
     { next: 'Next', say: 'Nice! The moves happened from the top of the stack down, so the last move went first.' },
-    { board: { w: 'Rb2', b: 'Ne2' }, you: 'b2-e2', say: 'Your rook attacks the knight. Capture it.' },
+    { board: { w: 'Rb2', b: 'Ne2' }, you: 'b2-e2', say: 'Try to capture the knight.' },
     { opp: 'e2-d4', say: 'Your rook is on its way, but the capture is only on the stack.' },
     { resolve: true, say: 'Black answered by moving the knight. Let it resolve.' },
     { next: 'Next', say: 'The knight jumped away first, so your rook captured nothing. It just moved.' },
