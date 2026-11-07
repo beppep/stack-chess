@@ -45,7 +45,7 @@ body {
   background: radial-gradient(1200px 700px at 30% -10%, #221d31 0%, var(--bg) 60%) fixed, var(--bg);
   color: var(--fg);
   font-family: var(--font-body);
-  font-size: 16px;
+  font-size: 1rem;
   line-height: 1.45;
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
@@ -92,24 +92,67 @@ a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-rad
 .page h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.6rem, 3.6vw, 2.2rem); letter-spacing: .04em; margin: 0 0 14px; overflow-wrap: anywhere; }
 .page p { color: var(--muted); }
 
+/* The game screen. fitLayout() picks the layout and sets --board and --side to fill the window.
+   Landscape: words and stack on the left, board in the middle, controls on the right.
+   Portrait: words, board, resolve button, then everything else. */
 .table {
-  display: grid;
-  grid-template-columns: minmax(230px, 290px) minmax(0, 600px) minmax(260px, 330px);
+  display: grid; column-gap: 16px; justify-content: center; align-items: stretch;
+  grid-template-columns: minmax(0, var(--side, 260px)) var(--board, 600px) minmax(0, var(--side, 260px));
+  grid-template-rows: minmax(0, 1fr);
   grid-template-areas: "stack board side";
-  gap: 24px; justify-content: center; align-items: start;
 }
-.stackcol { grid-area: stack; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.board-col { grid-area: board; min-width: 0; }
+.stackcol { grid-area: stack; display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; overflow: hidden; }
+.stackcol > .panel { min-height: 0; overflow: auto; flex: 0 1 auto; }
+.stackcol > .status, .stackcol > .clocks, .stackcol > .banner { flex: none; }
 .stackcol .stack { margin-top: 12px; }
-.board-col { grid-area: board; }
-.side { grid-area: side; }
-@media (max-width: 1180px) {
-  .table { grid-template-columns: minmax(230px, 290px) minmax(0, 600px); grid-template-areas: "stack board" "side side"; }
-  .table .side { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); align-items: start; }
-}
-@media (max-width: 860px) {
-  .table { grid-template-columns: minmax(0, 600px); grid-template-areas: "board" "stack" "side"; }
-}
-.board-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.stackcol { container-type: inline-size; }
+@container (max-width: 262px) { .card .pill { display: none; } }
+.side { grid-area: side; min-height: 0; overflow: hidden auto; }
+.controls { align-content: flex-start; }
+.controls .spacer { display: none; }
+html[data-layout="land"] .app:has(.table:not([hidden])) { max-width: none; }
+html[data-layout="land"] body.ingame { padding-bottom: 0; }
+
+/* Phone on its side: no room for the header, so only the logo stays, in the left column */
+body.ingame[data-short] { padding-block: 6px; padding-left: max(6px, env(safe-area-inset-left, 0px)); padding-right: max(6px, env(safe-area-inset-right, 0px)); }
+body.ingame[data-short] .app { gap: 0; }
+body.ingame[data-short] .nav, body.ingame[data-short] .account { display: none; }
+body.ingame[data-short] .site { position: absolute; top: 4px; }
+body.ingame[data-short] .logo { font-size: 1rem; }
+body.ingame[data-short] .status { margin-top: 24px; min-height: 0; padding: 6px 8px; }
+body.ingame[data-short] .status-sub, body.ingame[data-short] .stackcol h2, body.ingame[data-short] .stackcol .hint, body.ingame[data-short] #previewBtn { display: none; }
+body.ingame[data-short] .status-main { font-size: .9rem; }
+body.ingame[data-short] #resolveBtn { min-height: 40px; font-size: .95rem; padding: 6px; }
+body.ingame[data-short] .panel { padding: 8px; }
+body.ingame[data-short] .btn { padding: 5px 9px; font-size: .85rem; }
+
+/* Portrait */
+html[data-layout="tall"] .table { display: flex; flex-direction: column; gap: 8px; }
+html[data-layout="tall"] .stackcol { display: contents; }
+html[data-layout="tall"] .status { order: 1; }
+html[data-layout="tall"] .clocks { order: 2; }
+html[data-layout="tall"] .banner { order: 3; }
+html[data-layout="tall"] .board-col { order: 4; }
+html[data-layout="tall"] .boardrow { width: var(--board, 100%); max-width: 100%; margin-inline: auto; }
+html[data-layout="tall"] .stackcol > .panel { order: 5; overflow: visible; }
+html[data-layout="tall"] .stackcol > .chat { order: 6; }
+html[data-layout="tall"] .side { order: 8; overflow: visible; }
+html[data-layout="tall"] .stackcol > .panel:not(.chat) { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; }
+html[data-layout="tall"] .stackcol h2, html[data-layout="tall"] .stackcol .hint { display: none; }
+html[data-layout="tall"] #resolveBtn { flex: 2 1 0; width: auto; min-height: 56px; }
+html[data-layout="tall"] #previewBtn { flex: 1 1 0; }
+html[data-layout="tall"] .stackcol .stack { width: 100%; margin-top: 0; }
+html[data-layout="tall"] body.ingame { padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); padding-top: 8px; }
+html[data-layout="tall"] body.ingame .app { gap: 8px; }
+html[data-layout="tall"] body.tut .status { min-height: 150px; }
+html[data-layout="tall"] body.tut .status-main { font-size: 1.25rem; }
+html[data-layout="tall"] body.tut .status .btn.primary { min-height: 56px; font-size: 1.3rem; }
+html[data-layout="land"] body.tut .status .btn.primary { min-width: 0; width: 100%; }
+html[data-layout="land"] body.tut .status .btnrow { flex: 1 1 100%; }
+html[data-layout="land"] body.tut .status { align-content: flex-start; }
+body.ingame[data-short].tut .status-main { font-size: 1rem; }
+body.ingame[data-short].tut .status .btn.primary { min-height: 40px; font-size: 1rem; }
 
 /* Status line */
 .status {
@@ -180,8 +223,8 @@ a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-rad
   box-shadow: inset 0 0 0 0.9cqw rgba(20, 16, 30, .38);
 }
 /* Tutorial: only the board, the words and the stack */
-body.tut .modebar, body.tut .controls, body.tut .side, body.tut #previewBtn, body.tut .stackcol .hint { display: none; }
-body.tut-nostack .stackcol { visibility: hidden; }
+body.tut .controls, body.tut .side, body.tut #previewBtn, body.tut .stackcol .hint { display: none; }
+body.tut-nostack .stackcol > .panel { visibility: hidden; }
 body.tut .status { flex-wrap: wrap; justify-content: space-between; min-height: 84px; }
 body.tut .status-main { font-family: inherit; font-weight: 500; font-size: 1.45rem; line-height: 1.35; letter-spacing: 0; }
 body.tut .status .status-text { flex: 1 1 260px; }
@@ -263,7 +306,7 @@ a.btn { display: inline-block; text-decoration: none; }
   margin: 0 0 2px; font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; letter-spacing: .08em; text-transform: uppercase;
 }
 .panel .hint { margin: 0 0 10px; color: var(--muted); font-size: .9rem; }
-#resolveBtn { width: 100%; min-height: 5.5rem; font-size: 1.1rem; }
+#resolveBtn { width: 100%; min-height: clamp(3.5rem, 11vh, 5.5rem); font-size: 1.1rem; }
 #previewBtn { width: 100%; margin-top: 8px; touch-action: none; user-select: none; -webkit-user-select: none; }
 #previewBtn.held { background: var(--sel); color: #1a1408; border-color: transparent; }
 
@@ -310,13 +353,6 @@ a.btn { display: inline-block; text-decoration: none; }
 .rules b { color: var(--fg); font-weight: 700; }
 
 /* Mode switch */
-.modebar { display: inline-flex; align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
-.modebar button {
-  font-family: var(--font-body); font-weight: 700; font-size: .95rem; color: var(--muted);
-  background: transparent; border: 0; border-radius: 7px; padding: 7px 14px; cursor: pointer;
-}
-.modebar button[aria-selected="true"] { background: var(--panel-2); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); }
-.modebar button:focus-visible { outline: 2px solid var(--sel); outline-offset: 1px; }
 
 /* Computer panel */
 .cpu { display: flex; flex-direction: column; gap: 10px; }
@@ -532,6 +568,12 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 
   <main class="table view" id="view-game" hidden>
     <aside class="stackcol" aria-label="The stack">
+      <div class="status" id="status" aria-live="polite"></div>
+      <div class="clocks" id="clocks" hidden>
+        <div class="clk w" id="clockW"><span class="who">White</span><span class="t"></span></div>
+        <div class="clk b" id="clockB"><span class="who">Black</span><span class="t"></span></div>
+      </div>
+      <div class="banner" id="banner" hidden></div>
       <div class="panel">
         <h2>The stack</h2>
         <p class="hint">Number 1 resolves first. A move that is no longer possible fizzles.</p>
@@ -551,17 +593,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     </aside>
 
     <section class="board-col" aria-label="Board">
-      <div class="modebar" role="tablist" aria-label="Where you play">
-        <button type="button" role="tab" id="modeLocal" aria-selected="true">Same screen</button>
-        <button type="button" role="tab" id="modeCpu" aria-selected="false">vs Computer</button>
-        <button type="button" role="tab" id="modeOnline" aria-selected="false">Online</button>
-      </div>
-      <div class="status" id="status" aria-live="polite"></div>
-      <div class="clocks" id="clocks" hidden>
-        <div class="clk w" id="clockW"><span class="who">White</span><span class="t"></span></div>
-        <div class="clk b" id="clockB"><span class="who">Black</span><span class="t"></span></div>
-      </div>
-      <div class="banner" id="banner" hidden></div>
       <div class="boardrow">
       <div class="board-frame" id="frame">
         <div class="board" id="board"></div>
@@ -585,6 +616,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         <span class="evalnum" id="evalNum"></span>
       </div>
       </div>
+    </section>
+
+    <aside class="side">
       <div class="controls">
         <button class="btn" id="flipBtn" type="button">Flip board</button>
         <label class="clocksel" title="Applies to new games">Clock
@@ -601,9 +635,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         <button class="btn" id="undoBtn" type="button">Undo</button>
         <button class="btn" id="newBtn" type="button">New game</button>
       </div>
-    </section>
-
-    <aside class="side">
       <div class="panel cpu" id="cpuPanel" hidden>
         <h2>Computer</h2>
         <p class="label">You play</p>
@@ -1317,7 +1348,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   }
   $('promo').addEventListener('click', e => { if (e.target.id === 'promo') $('promo').hidden = true; });
 
-  let lastPanelKey = '';
+  let lastPanelKey = '', fitKey = '';
   function renderAll() { onlineView(); render(); renderOnline(); renderChat(); syncHosting(); }
   // We host a room nobody has joined yet: no game to show.
   const hostWaiting = () => !!NET.code && NET.role === 'host' && !NET.ready && !NET.actions.length;
@@ -1374,8 +1405,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       el.innerHTML = html;
       el.setAttribute('aria-label', sqName(s) + (p ? ` ${NAME[p.c]} ${PNAME[p.t]}` : ''));
     }
-    $('modeLocal').setAttribute('aria-selected', V.mode === 'local');
-    $('modeOnline').setAttribute('aria-selected', V.mode === 'online');
     $('newBtn').hidden = V.mode === 'online' || V.mode === 'replay' || V.mode === 'puzzle';
     $('undoBtn').hidden = V.mode === 'online' || V.mode === 'replay' || V.mode === 'puzzle';
     $('replayBtn').hidden = V.mode === 'replay' || V.mode === 'puzzle' || !real.acts.length;
@@ -1385,7 +1414,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     $('undoBtn').disabled = V.busy || CPU.thinking || !undoEntry();
     $('cpuPanel').hidden = V.mode !== 'cpu';
     $('evalbar').hidden = V.mode !== 'cpu';
-    $('modeCpu').setAttribute('aria-selected', V.mode === 'cpu');
     $('onlinePanel').hidden = V.mode !== 'online';
     renderArrows(G);
     renderStatus(real);
@@ -1394,21 +1422,34 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     renderClocks(real);
     scheduleEval();
     if (lastEval !== null) drawEval(lastEval);
-    alignStack();
+    if (fitKey !== V.mode + $('evalbar').hidden) { fitKey = V.mode + $('evalbar').hidden; fitLayout(); }
     // keep the online panel in step with anything it shows
     const panelKey = JSON.stringify([V.mode, NET.code, NET.role, NET.connected, NET.watching, NET.watchers, NET.round, NET.G.phase, NET.names, NET.status, NET.ready, NET.online, NET.rated, NET.accounts, LOBBY.rooms]);
     if (panelKey !== lastPanelKey) { lastPanelKey = panelKey; renderOnline(); }
   }
 
-  // Line the stack panel up with the top of the board when they sit side by side.
-  function alignStack() {
-    const col = document.querySelector('.stackcol'), boardCol = document.querySelector('.board-col'), frame = $('frame');
-    const sideBySide = window.matchMedia('(min-width: 861px)').matches; // matches the CSS breakpoint
-    col.style.marginTop = sideBySide ? Math.max(0, frame.getBoundingClientRect().top - boardCol.getBoundingClientRect().top) + 'px' : '';
+  // Picks the layout for this window and makes the board as big as the room allows.
+  function fitLayout() {
+    const root = document.documentElement, vv = window.visualViewport;
+    const W = root.clientWidth, H = vv && vv.scale < 1.01 ? vv.height : root.clientHeight; // innerWidth grows with wide content on phones
+    const tall = H > W * 1.05 || W < 620, short = !tall && H < 560;
+    root.dataset.layout = tall ? 'tall' : 'land';
+    const rem = tall ? 16 : Math.max(16, Math.min(26, H / 66));
+    root.style.fontSize = rem + 'px';
+    if (short) document.body.dataset.short = '1'; else delete document.body.dataset.short;
+    if ($('view-game').hidden) return;
+    const css = getComputedStyle(document.body), room = W - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight);
+    const ev = $('evalbar').hidden ? 0 : 32, row = document.querySelector('.boardrow');
+    const side = Math.round(Math.min(21 * rem, Math.max(short ? 150 : 190, W * 0.18)));
+    const top = short ? parseFloat(css.paddingTop) : row.getBoundingClientRect().top + window.scrollY;
+    const roomH = H - top - (tall ? 80 : short ? 6 : 16), roomW = (tall ? room : room - 2 * side - 32) - ev;
+    root.style.setProperty('--side', side + 'px');
+    root.style.setProperty('--board', Math.floor(Math.max(220, Math.min(roomH, roomW))) + ev + 'px');
+    if (!tall) $('view-game').style.height = Math.floor(Math.max(220, Math.min(roomH, roomW))) + 'px'; else $('view-game').style.height = '';
   }
-  window.addEventListener('resize', alignStack);
-  if (window.ResizeObserver) new ResizeObserver(() => alignStack()).observe(document.querySelector('.table'));
-  if (document.fonts) document.fonts.ready.then(alignStack);
+  window.addEventListener('resize', fitLayout);
+  window.addEventListener('orientationchange', fitLayout);
+  if (document.fonts) document.fonts.ready.then(fitLayout);
 
   function renderArrows(G) {
     const NS = 'http://www.w3.org/2000/svg';
@@ -2359,9 +2400,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     renderAll();
     if (V.mode === 'cpu') cpuTurn();
   });
-  $('modeLocal').addEventListener('click', () => { if (!V.busy) go('#/local'); });
-  $('modeOnline').addEventListener('click', () => { if (!V.busy) go('#/online'); });
-  $('modeCpu').addEventListener('click', () => { if (!V.busy) go('#/computer'); });
   $('newBtn').addEventListener('click', () => {
     const btn = $('newBtn');
     if (V.busy) return;
@@ -2392,6 +2430,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (v !== view) window.scrollTo(0, 0);
     view = v;
     document.querySelectorAll('.view').forEach(e => { e.hidden = e.id !== 'view-' + v; });
+    document.body.classList.toggle('ingame', v === 'game');
+    fitLayout();
     document.querySelectorAll('.nav a').forEach(a => {
       if (a.dataset.view === v) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
