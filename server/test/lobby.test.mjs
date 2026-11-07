@@ -63,10 +63,10 @@ test('lobby: a logged-in host is listed by username, and bad rooms are ignored',
   a.close(); b.close();
 });
 
-test('rooms made from the list are rated only with a clock', async t => {
+test('rooms made from the list are rated with or without a clock', async t => {
   const srv = await startServer({ port: 0 });
   t.after(() => srv.stop());
-  for (const [code, clock, rated] of [['ABC234', '10+5', true], ['ABC235', null, false]]) {
+  for (const [code, clock, rated] of [['ABC234', '10+5', true], ['ABC235', null, true]]) {
     const a = await connect(srv.ws + '/room/' + code);
     a.send({ type: 'hello', token: 't' + code, name: 'A', create: { clock, color: 'w', rated: true } });
     assert.equal((await a.next('state')).rated, rated);

@@ -18,7 +18,14 @@ async function setup() {
   };
   return { srv, tok, me, profile, room, join };
 }
-const flag = (c, round) => c.send({ type: 'act', round, n: 0, a: { t: 'flag' } });
+// White and Black each make a first move, so the round counts, and White is to act.
+const open = async (w, b, round) => {
+  w.c.send({ type: 'act', round, n: 0, a: { t: 'move', from: 52, to: 36 } });
+  await b.c.next('act');
+  b.c.send({ type: 'act', round, n: 1, a: { t: 'move', from: 12, to: 28 } });
+  await w.c.next('act');
+};
+const flag = (c, round) => c.send({ type: 'act', round, n: 2, a: { t: 'flag' } });
 const settle = () => new Promise(r => setTimeout(r, 150));
 
 test('rated room: results move ratings, rematch reports again, no double report', async t => {
@@ -30,6 +37,7 @@ test('rated room: results move ratings, rematch reports again, no double report'
   assert.equal(b.st.rated, true);
   assert.deepEqual(b.st.accounts, { host: 'Ann', guest: 'Ben' });
   assert.deepEqual(b.st.names, { host: 'Ann', guest: 'Ben' });
+  await open(a, b, 1);
   flag(a.c, 1); // White (Ann) runs out of time
   await b.c.next('act');
   await settle();
@@ -46,6 +54,7 @@ test('rated room: results move ratings, rematch reports again, no double report'
   const s2 = await b.c.next('state');
   assert.equal(s2.round, 2);
   assert.equal(s2.hostColor, 'b');
+  await open(b, a, 2);
   flag(b.c, 2);
   await a.c.next('act');
   await settle();
@@ -64,6 +73,7 @@ test('invite room is counted but not rated', async t => {
   const b = await join('INVIT1', 't2', { session: tok.Ben });
   assert.equal(b.st.rated, false);
   assert.deepEqual(b.st.accounts, { host: 'Ann', guest: 'Ben' });
+  await open(a, b, 1);
   flag(a.c, 1);
   await b.c.next('act');
   await settle();
@@ -84,7 +94,8 @@ test('a guest using an account name is not that account; the round is not rated'
   const g = await join('GUEST1', 't2', { name: 'Ann' });
   assert.equal(g.st.accounts.guest, null);
   assert.equal(g.st.accounts.host, 'Ben');
-  g.c.send({ type: 'act', round: 1, n: 0, a: { t: 'flag' } }); // guest is White
+  await open(g, b, 1); // guest is White
+  flag(g.c, 1);
   await b.c.next('act');
   await settle();
   assert.equal((await me('Ben')).rating, 1200);
@@ -113,6 +124,7 @@ test('a seat keeps its account when it reconnects without a session', async t =>
   a.c.close();
   const a2 = await join('KEEP01', 't1', { name: 'Ann' }); // back as a guest, no session
   assert.equal(a2.st.accounts.host, 'Ann');
+  await open(a2, b, 1);
   flag(a2.c, 1); // Ann is White and loses
   await b.c.next('act');
   await settle();
@@ -130,6 +142,7 @@ test('a failing report does not break the game and is retried on sync', async t 
   const real = acc.report.bind(acc);
   let calls = 0;
   acc.report = r => { if (calls++ === 0) throw new Error('down'); return real(r); };
+  await open(a, b, 1);
   flag(a.c, 1);
   await b.c.next('act'); // gameplay went on
   await settle();

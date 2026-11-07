@@ -30,6 +30,10 @@ export class Accounts extends DurableObject {
       return me ? json({ name: me.name, rating: me.rating }) : json({}, 401);
     }
     if (req.method === 'GET' && path === '/api/leaderboard') return this.leaderboard();
+    if (req.method === 'GET' && path === '/api/games') {
+      const me = await this.whoami(bearer);
+      return me ? this.games(me.key) : json({}, 401);
+    }
     if (req.method === 'GET' && path.startsWith('/api/profile/')) {
       let who;
       try { who = decodeURIComponent(path.slice(13)).toLowerCase(); } catch (_) { return json({}, 404); }
@@ -92,11 +96,38 @@ export class Accounts extends DurableObject {
     return json({ name: user.name, rating: user.rating, w: user.w, l: user.l, d: user.d, games });
   }
 
+  // A player's unfinished games, the ones waiting for them first.
+  async games(key) {
+    const games = [...(await this.ctx.storage.list({ prefix: 'active:' + key + ':' })).values()];
+    games.sort((a, b) => b.myTurn - a.myTurn || a.since - b.since);
+    return json(games);
+  }
+
+  // A room tells us how its game stands, so each player's list stays current.
+  async touch(g) {
+    const st = this.ctx.storage;
+    if (await st.get('done:' + g.code + ':' + g.round)) return; // a late message about a finished round
+    for (const c of ['w', 'b']) {
+      const me = g.seats[c], opp = g.seats[c === 'w' ? 'b' : 'w'];
+      if (!me.key) continue;
+      await st.put('active:' + me.key + ':' + g.code, {
+        code: g.code, color: c, clock: g.clock, since: g.since, waiting: g.waiting, myTurn: !g.waiting && g.cur === c,
+        rated: !!(g.rated && opp.key), opponent: { name: opp.name, account: !!opp.key }
+      });
+    }
+  }
+  async forget(code, seats) {
+    for (const c of ['w', 'b']) if (seats[c].key) await this.ctx.storage.delete('active:' + seats[c].key + ':' + code);
+  }
+
   // A finished round. Counted once per code and round; rated only when both players have accounts.
+  // An aborted round leaves no trace: no game on the profile, no change to anyone's record.
   async report(r) {
     const st = this.ctx.storage, done = 'done:' + r.code + ':' + r.round;
     if (await st.get(done)) return { applied: false };
     await st.put(done, true);
+    await this.forget(r.code, r.seats);
+    if (r.aborted) return { applied: true };
     const users = {};
     for (const c of ['w', 'b']) users[c] = r.seats[c].key && (await st.get('user:' + r.seats[c].key));
     const score = r.winner === 'w' ? 1 : r.winner === 'b' ? 0 : 0.5;

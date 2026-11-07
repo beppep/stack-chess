@@ -86,6 +86,8 @@ a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-rad
 .mode .ic { font-family: var(--font-glyph); font-size: 1.35rem; width: 1.35rem; text-align: center; font-weight: 400; }
 .online-count { color: var(--muted); font-size: .9rem; margin-top: -4px; }
 .online-count:empty { display: none; }
+#yourTurn[hidden] { display: none; }
+#gamesBody .games { max-height: none; }
 .logged-in .btn.mode.how { order: 1; } /* How to play comes first for newcomers, last once logged in */
 .online-count:not(:empty)::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
 .deco .sq { cursor: default; }
@@ -497,6 +499,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   <header class="site">
     <a class="logo" href="#/">Stack <span>Chess</span></a>
     <nav class="nav" aria-label="Site">
+      <a href="#/games" data-view="games" id="navGames" hidden>Your games</a>
       <a href="#/leaderboard" data-view="leaderboard">Leaderboard</a>
       <a href="#/how" data-view="how">How to play</a>
       <a href="#/puzzles" data-view="puzzles">Puzzles</a>
@@ -512,6 +515,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     <div>
       <h1>Chess where every move can be answered before it happens</h1>
       <div class="modes">
+        <a class="btn primary mode" id="yourTurn" href="#/games" hidden><span class="ic">♔︎</span><span><span id="yourTurnText">Your turn</span><small>Games waiting for you</small></span></a>
         <a class="btn mode how" href="#/how"><span class="ic">?</span><span>How to play<small>The stack in two minutes</small></span></a>
         <a class="btn primary mode" href="#/local"><span class="ic">♟︎</span><span>Local versus<small>Two players, one screen</small></span></a>
         <a class="btn primary mode" href="#/computer"><span class="ic">♞︎</span><span>Vs computer<small>Easy, normal or hard</small></span></a>
@@ -532,6 +536,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     </div>
   </main>
 
+  <main class="page view" id="view-games" hidden><h1>Your games</h1><div id="gamesBody"></div></main>
   <main class="page view" id="view-leaderboard" hidden><h1>Leaderboard</h1><div id="leaderBody"></div></main>
   <main class="page view" id="view-profile" hidden><h1 id="profileName"></h1><div id="profileBody"></div></main>
   <main class="page view" id="view-login" hidden><h1>Log in</h1><div id="loginBody"></div></main>
@@ -909,7 +914,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     rated: false, accounts: {},            // from the server: a Play online room, and each seat's account name (null = guest)
     watching: false,                       // this page is a spectator
     names: {},                             // display names by person: { host, guest }
-    past: []                               // earlier games in this room: [{ hostColor, actions }]
+    past: [],                              // earlier games in this room: [{ hostColor, actions }]
+    since: 0                               // when the player to act got the turn
   };
 
   const store = {
@@ -952,6 +958,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     store.set('session', a);
     myName = a ? a.name : guestName();
     nameInput.value = myName;
+    MY.games = [];
+    showTurnCount();
+    refreshGames();
     if (NET.code && NET.role && !NET.watching) NET.names[NET.role] = myName;
     renderAccount();
     renderAll();
@@ -1098,6 +1107,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     NET.rated = m.rated === true;
     NET.accounts = cleanAccounts(m.accounts);
     NET.past = Array.isArray(m.past) ? m.past : [];
+    NET.since = typeof m.since === 'number' ? m.since : Date.now();
     if (Array.isArray(m.chat)) NET.chat = m.chat.filter(c => c && typeof c.text === 'string');
     setPresence(m);
     if (!same) { NET.actions = acts.slice(); NET.G = replay(acts, seatsOf(), tc); NET.applied = acts.length; }
@@ -1124,7 +1134,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         break;
       case 'act':
         if (m.round !== NET.round || !m.a) { send({ type: 'sync' }); return; }
-        if (m.n === NET.actions.length) { NET.actions.push(m.a); saveNet(); pump(); }
+        if (m.n === NET.actions.length) { NET.actions.push(m.a); NET.since = Date.now(); saveNet(); pump(); }
         else if (!(m.n < NET.actions.length && sameAct(NET.actions[m.n], m.a))) send({ type: 'sync' });
         break;
       case 'chat':
@@ -1239,8 +1249,10 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     ws.onclose = () => { if (ws === LOBBY.ws) lobbyLost(); };
   }
   // Our room is listed while we are in it, nobody has joined, and no game has started.
+  // A logged-in player's game with no clock is listed by the server instead, and stays after the page closes.
+  const savedWaiting = () => !!ACCT && !NET.clock;
   function syncHosting() {
-    const want = NET.gotState && hostWaiting() &&
+    const want = NET.gotState && hostWaiting() && !savedWaiting() &&
       V.mode === 'online' && !$('view-online').hidden ? NET.code : null;
     if (want === LOBBY.hosting) return;
     const sent = want ? lobbySend({ type: 'host', code: want, clock: NET.clock && NET.clock.key, color: NET.hostColor, name: myName, session: ACCT ? ACCT.token : undefined })
@@ -1287,6 +1299,28 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 
   function rematch() {
     if (NET.connected) send({ type: 'rematch' });
+  }
+
+  // Takes back a game nobody joined.
+  function cancelRoom() {
+    const code = NET.code;
+    send({ type: 'cancel' });
+    store.set('game-' + code, null);
+    store.set('recent', (store.get('recent') || []).filter(c => c !== code));
+    leaveGame();
+    refreshGames();
+  }
+
+  // Ending a game early. The server checks these too. Until both players have moved, leaving doesn't count.
+  const DAY = 24 * 60 * 60 * 1000, CLAIM_DAYS = 7;
+  const earlyGame = () => !['w', 'b'].every(c => NET.actions.some(a => a.t === 'move' && a.c === c));
+  const oppSilentDays = () => {
+    const G = NET.G;
+    const silent = !NET.clock && !NET.watching && NET.connected && (G.phase === 'move' || G.phase === 'respond') && G.cur !== myColor() && !earlyGame();
+    return silent ? Math.floor((Date.now() - NET.since) / DAY) : 0;
+  };
+  function endGameAct(t) {
+    send({ type: 'act', round: NET.round, n: NET.actions.length, a: { t } });
   }
 
   // The address bar is the router's job (see Views); this only switches the game table.
@@ -1423,7 +1457,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (lastEval !== null) drawEval(lastEval);
     if (fitKey !== V.mode + $('evalbar').hidden) { fitKey = V.mode + $('evalbar').hidden; fitLayout(); }
     // keep the online panel in step with anything it shows
-    const panelKey = JSON.stringify([V.mode, NET.code, NET.role, NET.connected, NET.watching, NET.watchers, NET.round, NET.G.phase, NET.names, NET.status, NET.ready, NET.online, NET.rated, NET.accounts, LOBBY.rooms]);
+    const panelKey = JSON.stringify([V.mode, NET.code, NET.role, NET.connected, NET.watching, NET.watchers, NET.round, NET.G.phase, NET.names, NET.status, NET.ready, NET.online, NET.rated, NET.accounts, LOBBY.rooms, NET.clock && NET.clock.key, earlyGame(), oppSilentDays()]);
     if (panelKey !== lastPanelKey) { lastPanelKey = panelKey; renderOnline(); }
   }
 
@@ -1444,7 +1478,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     const roomH = H - top - (tall ? 80 : short ? 6 : 16), roomW = (tall ? room : room - 2 * side - 32) - ev;
     root.style.setProperty('--side', side + 'px');
     root.style.setProperty('--board', Math.floor(Math.max(220, Math.min(roomH, roomW))) + ev + 'px');
-    if (!tall) $('view-game').style.height = Math.floor(Math.max(220, Math.min(roomH, roomW))) + 'px'; else $('view-game').style.height = '';
+    $('view-game').style.height = tall ? '' : Math.floor(Math.max(220, roomH)) + 'px'; // the stack gets all the height there is
   }
   window.addEventListener('resize', fitLayout);
   window.addEventListener('orientationchange', fitLayout);
@@ -1496,7 +1530,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   function renderStatus(G) {
     const s = $('status'), banner = $('banner');
     const chip = c => `<span class="chip ${c}">${GLYPH.k}︎</span>`;
-    const text = (main, sub) => `<div class="status-text"><div class="status-main">${main}</div><div class="status-sub">${sub}</div></div>`;
+    const text = (main, sub) => `<div class="status-text"><div class="status-main">${main}</div>${sub ? `<div class="status-sub">${sub}</div>` : ''}</div>`;
     const c = G.cur;
     const rb = $('resolveBtn');
     const online = V.mode === 'online';
@@ -1519,7 +1553,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       s.innerHTML = (w ? chip(w) : '') + text(G.result.text, V.mode === 'replay' ? `Replay: action ${REP.pos} of ${REP.acts.length}.` : online ? 'Start a rematch from the Online panel.'
         : V.mode === 'puzzle' ? (w === PZ.p.side ? 'Puzzle solved.' : 'Try the puzzle again.') : 'Start a new game to play again.');
       banner.hidden = false;
-      banner.innerHTML = `<div class="big">${w ? NAME[w] + ' wins' : 'Draw'}</div><div class="status-sub">${G.result.text}.</div>`;
+      banner.innerHTML = `<div class="big">${w ? NAME[w] + ' wins' : G.result.aborted ? 'Aborted' : 'Draw'}</div><div class="status-sub">${G.result.text}.</div>`;
       return;
     }
     banner.hidden = true;
@@ -1544,9 +1578,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (online && !myColors().includes(c) && G.phase !== 'resolving') {
       const sub = G.phase === 'respond'
         ? `${nameOfColor(c) || 'Your opponent'} is deciding whether to respond to ${G.stack[G.stack.length - 1].label}.`
-        : `Waiting for ${nameOfColor(c) || 'your opponent'} to move.`;
-      s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`, '');
-      s.querySelector('.status-sub').textContent = sub; // the name is user-provided: no HTML
+        : '';
+      s.innerHTML = chip(c) + text(G.phase === 'respond' ? `${NAME[c]} may respond` : `${NAME[c]} to move`, sub ? ' ' : '');
+      if (sub) s.querySelector('.status-sub').textContent = sub; // the name is user-provided: no HTML
       return;
     }
     if (V.mode === 'puzzle' && PZ.state !== 'play' && !V.busy) {
@@ -1556,7 +1590,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     }
     if (V.mode === 'puzzle' && c !== PZ.p.side && G.phase !== 'resolving' && G.phase !== 'over') {
       s.innerHTML = chip(c) + text(PZ.thinking ? 'The computer is defending…' : `${NAME[c]} (computer) defends`,
-        G.phase === 'respond' ? `Deciding whether to respond to ${G.stack[G.stack.length - 1].label}.` : 'Choosing a move.');
+        G.phase === 'respond' ? `Deciding whether to respond to ${G.stack[G.stack.length - 1].label}.` : '');
       return;
     }
     if (V.mode === 'cpu' && c === CPU.color && G.phase !== 'resolving') {
@@ -1568,10 +1602,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     let main = '', sub = '';
     if (G.phase === 'move') {
       main = online ? `Your move (${NAME[c]})` : `${NAME[c]} to move`;
-      const ks = kingSq(G.st.board, c);
-      const inCheck = ks >= 0 && attacked(G.st.board, ks, other(c));
-      sub = inCheck ? 'Your king is under attack and can be captured. Your move goes on the stack, and ' + NAME[other(c)] + ' may respond.'
-                    : `Pick a piece. ${NAME[other(c)]} gets a chance to respond before it happens.`;
     } else if (G.phase === 'respond') {
       main = `${NAME[c]}: respond or let it resolve`;
       sub = availableMoves(G).length
@@ -1584,9 +1614,10 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     s.innerHTML = chip(c) + text(main, sub);
   }
 
+  let stackShown = '', stackLen = 0;
   function renderStack(G) {
     const ol = $('stack');
-    if (!G.stack.length) { ol.innerHTML = '<li class="empty">Empty. The next move goes here.</li>'; return; }
+    if (!G.stack.length) { ol.innerHTML = '<li class="empty">Empty. The next move goes here.</li>'; stackShown = ''; return; }
     const items = [];
     for (let i = G.stack.length - 1; i >= 0; i--) {
       const e = G.stack[i];
@@ -1602,7 +1633,14 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         <div class="mv"><span class="g">${e.glyph}︎</span>${e.label}</div></div>
         <span class="pill">${pill}</span></li>`);
     }
-    ol.innerHTML = items.join('');
+    // A redraw keeps your place in the list, unless a new move came in on top.
+    const html = items.join('');
+    if (html === stackShown) return;
+    const top = items.length === stackLen ? ol.scrollTop : 0;
+    ol.innerHTML = html;
+    ol.scrollTop = top;
+    stackShown = html;
+    stackLen = items.length;
   }
 
   function renderLog(G) {
@@ -1705,10 +1743,12 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (hostWaiting()) {
       const tc = timeControl(NET.clock && NET.clock.key);
       note(`You play ${NAME[NET.hostColor]} · ${tc ? tc.base / 60000 + ' min + ' + tc.inc / 1000 + ' s' : 'No clock'}. Your room is in the list. The game starts when someone joins.`);
+      if (savedWaiting()) note('You can close this page. The game stays in the list and in Your games.');
       note(NET.status, 'warn');
       frag.appendChild(inviteRow());
       const row = el('div', 'btnrow');
-      row.appendChild(button('Cancel room', '', leaveGame));
+      row.appendChild(button('Cancel room', '', cancelRoom));
+      if (savedWaiting()) row.appendChild(button('Back to games', '', leaveGame));
       frag.appendChild(row);
     } else if (!NET.code) {
       const left = el('div', 'panel online'), right = el('div', 'panel online');
@@ -1718,9 +1758,10 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       const clockRow = el('div', 'btnrow'), pick = clockSel.cloneNode(true);
       pick.id = 'roomClock';
       pick.value = clockSel.value;
-      pick.addEventListener('change', () => { clockSel.value = pick.value; clockSel.dispatchEvent(new Event('change')); });
+      pick.addEventListener('change', () => { clockSel.value = pick.value; clockSel.dispatchEvent(new Event('change')); renderOnline(); });
       clockRow.append(Object.assign(el('label', 'label', 'Clock'), { htmlFor: 'roomClock' }), pick);
       right.appendChild(clockRow);
+      if (clockSel.value === 'off') right.appendChild(el('p', 'hint', ACCT ? 'No time limit. Close the page and come back whenever you like.' : 'No time limit. Log in to keep your games in one place.'));
       right.appendChild(el('p', 'label', 'You play'));
       const colors = el('div', 'btnrow');
       for (const [c, t] of [['random', 'Random'], ['w', 'White'], ['b', 'Black']]) {
@@ -1733,7 +1774,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       }));
       left.appendChild(el('p', 'label', 'Open rooms'));
       const list = el('ul', 'games');
-      for (const r of LOBBY.rooms) {
+      const openRooms = LOBBY.rooms.filter(r => !(ACCT && r.account && r.name === ACCT.name)); // yours are in Your games
+      for (const r of openRooms) {
         const li = el('li'), info = el('div', 'ginfo'), top = el('div', 'gtop');
         top.append(el('span', 'players', r.name || 'Player'));
         if (r.account) top.append(el('span', 'code', String(r.rating)));
@@ -1743,7 +1785,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         li.append(info, button('Join', 'primary', () => go('#' + r.code)));
         list.appendChild(li);
       }
-      if (!LOBBY.rooms.length) list.appendChild(el('li', 'empty', LOBBY.ws ? 'No open rooms right now. Host one!' : 'Cannot reach the game server. Retrying…'));
+      if (!openRooms.length) list.appendChild(el('li', 'empty', LOBBY.ws ? 'No open rooms right now. Host one!' : 'Cannot reach the game server. Retrying…'));
       left.appendChild(list);
       const form = el('form', 'joinrow');
       form.innerHTML = '<label for="codeInput" class="label">Join with a code</label><div class="btnrow"><input id="codeInput" autocomplete="off" spellcheck="false" maxlength="6" placeholder="K7QF2M"><button class="btn small" type="submit">Join</button></div>';
@@ -1811,6 +1853,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         frag.appendChild(ul);
       }
       if (NET.watchers) note(NET.watchers === 1 ? '1 person is watching.' : NET.watchers + ' people are watching.');
+      const silent = oppSilentDays();
+      if (silent) note(`Your opponent hasn't moved for ${silent} day${silent === 1 ? '' : 's'}.${silent < CLAIM_DAYS ? ` After ${CLAIM_DAYS} days you can claim the win.` : ''}`);
       note(NET.status, 'warn');
       // Every finished game in this room, rematches included.
       const games = NET.past.concat(NET.G.phase === 'over' ? [{ hostColor: NET.hostColor, actions: NET.actions }] : []);
@@ -1826,7 +1870,14 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       frag.appendChild(inviteRow());
       const row2 = el('div', 'btnrow');
       row2.appendChild(button('Back to games', '', leaveGame));
-      if (NET.G.phase === 'over' && NET.connected && !NET.watching && NET.online[NET.role === 'host' ? 'guest' : 'host']) row2.appendChild(button('Rematch (swap colors)', 'primary', rematch));
+      if (NET.G.phase === 'over' && NET.connected && !NET.watching && (!NET.clock || NET.online[NET.role === 'host' ? 'guest' : 'host'])) row2.appendChild(button('Rematch (swap colors)', 'primary', rematch));
+      if ((NET.G.phase === 'move' || NET.G.phase === 'respond') && NET.connected && !NET.watching) {
+        const early = earlyGame();
+        row2.appendChild(button(early ? 'Abort' : 'Resign', '', () => {
+          if (window.confirm(early ? 'Abort this game? It will not count.' : 'Resign this game?')) endGameAct(early ? 'abort' : 'resign');
+        }));
+        if (silent >= CLAIM_DAYS) row2.appendChild(button('Claim win', 'primary', () => endGameAct('claim')));
+      }
       frag.appendChild(row2);
     }
     box.replaceChildren(frag);
@@ -1842,7 +1893,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (G.clock && G.clock.key) q.set('tc', G.clock.key);
     if (names.w) q.set('w', names.w);
     if (names.b) q.set('b', names.b);
-    const m = G.acts.map(a => (a.t === 'move' ? sqName(a.from) + sqName(a.to) + (a.p || '') : a.t === 'resolve' ? 'R' : 'F') +
+    const END = { abort: 'A', resign: 'X', claim: 'C' };
+    const m = G.acts.map(a => (a.t === 'move' ? sqName(a.from) + sqName(a.to) + (a.p || '') : a.t === 'resolve' ? 'R' : END[a.t] ? END[a.t] + a.c : 'F') +
       (typeof a.left === 'number' ? ':' + (a.left / 1000).toFixed(1) : ''));
     const qs = q.toString();
     return location.origin + location.pathname + '#replay?' + qs + (qs ? '&' : '') + 'm=' + m.join(',');
@@ -1855,6 +1907,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       let a = null;
       if (mv === 'R') a = { t: 'resolve' };
       else if (mv === 'F') a = { t: 'flag' };
+      else if (/^[AXC][wb]$/.test(mv)) a = { t: { A: 'abort', X: 'resign', C: 'claim' }[mv[0]], c: mv[1] };
       else if (/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(mv)) {
         a = { t: 'move', from: sqIndex(mv.slice(0, 2)), to: sqIndex(mv.slice(2, 4)) };
         if (mv[4]) a.p = mv[4];
@@ -2521,8 +2574,72 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     }
     box.appendChild(t.wrap);
   }
+  // ---------- Your games ----------
+  // Every unfinished game of a logged-in player, from the server, so it works on any device.
+  const MY = { games: [] };
+  const BASE_TITLE = document.title;
+  function showTurnCount() {
+    const n = MY.games.filter(g => g.myTurn).length;
+    document.title = (n ? '(' + n + ') ' : '') + BASE_TITLE;
+    $('navGames').hidden = !ACCT;
+    $('navGames').textContent = 'Your games' + (n ? ' (' + n + ')' : '');
+    $('yourTurn').hidden = !n;
+    $('yourTurnText').textContent = 'Your turn (' + n + ')';
+  }
+  async function refreshGames() {
+    const asked = ACCT;
+    const r = asked ? await api('/api/games', { auth: true }) : { ok: true, data: [] };
+    if (asked !== ACCT || !r.ok || !Array.isArray(r.data)) return;
+    MY.games = r.data;
+    showTurnCount();
+    if (view === 'games') renderGames();
+  }
+  function ago(t) {
+    const m = Math.max(0, Math.floor((Date.now() - t) / 60000));
+    if (m < 60) return m + ' min';
+    return m < 1440 ? Math.floor(m / 60) + ' h' : Math.floor(m / 1440) + ' d';
+  }
+  function renderGames() {
+    const box = $('gamesBody');
+    box.textContent = '';
+    if (!ACCT) {
+      const p = el('p', 'emptyline', 'Log in to keep your games in one place. ');
+      const a = el('a', '', 'Log in'); a.href = '#/login';
+      p.appendChild(a);
+      box.appendChild(p);
+      return;
+    }
+    if (!MY.games.length) {
+      const p = el('p', 'emptyline', 'No games in progress. ');
+      const a = el('a', '', 'Play online'); a.href = '#/online';
+      p.appendChild(a);
+      box.appendChild(p);
+      return;
+    }
+    const section = (title, list) => {
+      if (!list.length) return;
+      box.appendChild(el('h2', '', title));
+      const ul = el('ul', 'games');
+      for (const g of list) {
+        const li = el('li'), info = el('div', 'ginfo'), top = el('div', 'gtop');
+        top.append(el('span', 'players', g.waiting ? 'No opponent yet' : g.opponent.name || 'Guest'), el('span', 'code', g.code));
+        const tc = timeControl(g.clock);
+        const bits = [`You play ${NAME[g.color]}`, tc ? `${tc.base / 60000} min + ${tc.inc / 1000} s` : 'No clock'];
+        if (!g.waiting) bits.push(g.rated ? 'Rated' : 'Casual', ago(g.since));
+        info.append(top, el('div', 'gstatus', bits.join(' · ')));
+        li.append(info, button(g.myTurn ? 'Play' : 'Open', g.myTurn ? 'primary' : '', () => go('#' + g.code)));
+        ul.appendChild(li);
+      }
+      box.appendChild(ul);
+    };
+    section('Your turn', MY.games.filter(g => g.myTurn));
+    section('Their turn', MY.games.filter(g => !g.myTurn && !g.waiting));
+    section('Waiting for an opponent', MY.games.filter(g => g.waiting));
+  }
+
   function route() {
     const hash = location.hash, code = hash.slice(1).toUpperCase();
+    refreshGames();
     if (ACCT && AUTH_ROUTE.test(hash)) { go(lastHash || '#/'); return; } // logged in: nothing to do there
     if (hash.length > 1 && !AUTH_ROUTE.test(hash)) lastHash = hash; // where to return after logging in
     if (hash.startsWith('#replay')) { show('game'); openReplay(parseReplay(hash)); return; }
@@ -2553,6 +2670,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (name === 'puzzles' || name === 'extras') { renderPuzzleList(); show('puzzles'); return; }
     if (name === 'how') { show('game'); startTutorial(); return; }
     if (name === 'rules') { show('how'); return; }
+    if (name === 'games') { renderGames(); show('games'); return; }
     if (name === 'leaderboard') renderLeaderboard();
     show(name === 'leaderboard' ? name : 'home');
   }
@@ -2637,6 +2755,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   lobbyConnect();
   renderAccount();
   renderAll();
+  showTurnCount();
+  setInterval(() => { if (!document.hidden) refreshGames(); }, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshGames(); });
   // A saved login is checked once: a 401 means it ended, no answer (offline) keeps it.
   if (ACCT) {
     const token = ACCT.token;

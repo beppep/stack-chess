@@ -1,6 +1,6 @@
 // Stack Chess game server (Cloudflare Workers + Durable Objects).
 //   /room/CODE   one Room per game code: seats, every action, clocks, chat, earlier games
-//   /lobby/play  the one Lobby: counts who is online and pairs two people who press "Play online"
+//   /lobby/play  the one Lobby: counts who is online and lists the games waiting for a second player
 // Both are WebSocket endpoints. The page sends JSON messages and gets JSON messages back.
 import { DurableObject } from 'cloudflare:workers';
 import '../../beta/rules.js';
@@ -12,6 +12,9 @@ const R = globalThis.StackRules;
 const CODE = /^[A-Z0-9]{6}$/;
 const LATENCY = 1500;                 // free time on top of each turn for the network
 const STEP = 750;                     // the page's resolve animation step, which doesn't count on the clock
+const DAY = 24 * 60 * 60 * 1000;
+const CLAIM_AFTER = 7 * DAY;          // a game with no clock: how long the opponent's silence lasts before you may claim the win
+const WAIT_LIMIT = 30 * DAY;          // a listed game nobody joined leaves the list after this long
 
 export default {
   async fetch(req, env) {
@@ -49,6 +52,9 @@ function newRoom(code, clock, hostColor, host, guest, rated = false) {
 }
 const ready = s => s.joined.host && s.joined.guest;
 const playing = G => G.phase === 'move' || G.phase === 'respond';
+const ENDINGS = ['resign', 'claim', 'abort'];
+// Until both players have moved, a game can be left without it counting.
+const early = actions => !['w', 'b'].every(c => actions.some(a => a.t === 'move' && a.c === c));
 
 // One game code. The room keeps the action list and checks every action with the shared rules,
 // so a page can't cheat. It also runs the clocks: a player whose time runs out loses even if
@@ -89,43 +95,65 @@ export class Room extends DurableObject {
     return {
       type: 'state', role: me.role, round: s.round, hostColor: s.hostColor, clock: s.clock, actions: s.actions, past,
       names: s.names, rated: !!s.rated, accounts: { host: s.accounts?.host?.name || null, guest: s.accounts?.guest?.name || null },
-      chat: s.chat.map(c => ({ c: c.c, r: c.r, text: c.text, n: c.n, mine: c.from === me.token })),
+      chat: s.chat.map(c => ({ c: c.c, r: c.r, text: c.text, n: c.n, mine: c.from === me.token || c.r === me.role })),
       left: G.clock && ready(s) && playing(G) ? Math.max(0, Math.round(this.timeLeft(G))) : undefined,
+      since: this.since(),
       ...this.presence()
     };
   }
+  // When the player to act got the turn. A resolve followed by a move is one turn, so this only changes when the turn passes.
+  since() { return this.s.since || this.s.turnStart || 0; }
   // Saves an action that already went through the rules, restarts the clock and tells everyone else.
   async record(a, animation, except) {
-    const s = this.s;
+    const s = this.s, G = this.game();
     s.actions.push(a);
     s.turnStart = Date.now();
     s.grace = animation + LATENCY;
+    if (G.cur !== s.turnOf) { s.turnOf = G.cur; s.since = s.turnStart; }
     await this.save();
     await this.armClock();
     this.broadcast({ type: 'act', round: s.round, n: s.actions.length - 1, a }, except);
+    await this.updateLists();
     await this.reportRound();
+  }
+  seats() {
+    const s = this.s;
+    const seat = role => ({ key: s.accounts?.[role]?.key || null, name: s.names[role] || '' });
+    return { [s.hostColor]: seat('host'), [R.other(s.hostColor)]: seat('guest') };
+  }
+  accounts() { return this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')); }
+  lobby() { return this.env.LOBBY.get(this.env.LOBBY.idFromName('play')); }
+  // Keeps this game on the Your Games list of each player with an account.
+  async updateLists() {
+    const s = this.s, G = this.game();
+    if (G.phase === 'over' || !(s.accounts?.host || s.accounts?.guest)) return;
+    try {
+      await this.accounts().touch({
+        code: s.code, round: s.round, clock: s.clock, rated: !!s.rated, cur: G.cur, since: this.since(), waiting: !ready(s), seats: this.seats()
+      });
+    } catch (_) {} // the next action tries again
   }
   // Tells the accounts server how a finished round ended, once per round.
   async reportRound() {
     const s = this.s, G = this.game();
     if (G.phase !== 'over' || (s.reported || 0) >= s.round) return;
-    const seat = role => ({ key: s.accounts?.[role]?.key || null, name: s.names[role] || '' });
-    const seats = { [s.hostColor]: seat('host'), [R.other(s.hostColor)]: seat('guest') };
+    const seats = this.seats();
     const done = s.round;
     s.reported = done;
     await this.save();
     try {
-      await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).report({
+      await this.accounts().report({
         code: s.code, round: done, clock: s.clock, hostColor: s.hostColor, actions: s.actions, endedAt: Date.now(),
-        rated: !!s.rated, winner: G.result?.winner || null, seats
+        rated: !!s.rated, winner: G.result?.winner || null, aborted: !!G.result?.aborted, seats
       });
     } catch (_) {
       s.reported = done - 1; // try again on the next hello or sync; report() ignores repeats
       await this.save();
     }
   }
+  // Out of time. Before both players have moved that only aborts the game.
   async flag(G) {
-    const a = { t: 'flag', c: G.cur, by: G.cur === this.s.hostColor ? 'host' : 'guest' };
+    const a = { t: early(this.s.actions) ? 'abort' : 'flag', c: G.cur, by: G.cur === this.s.hostColor ? 'host' : 'guest' };
     if (!R.startAction(G, a)) return;
     await this.record(a, 0, null);
   }
@@ -155,11 +183,13 @@ export class Room extends DurableObject {
     switch (m.type) {
       case 'act': {
         const G = this.game(), color = this.colorOf(me.role), a0 = m.a || {};
+        if (player && m.round === s.round && ready(s) && ENDINGS.includes(a0.t)) return this.endRound(ws, me, a0.t);
         if (!player || m.round !== s.round || m.n !== s.actions.length || !ready(s) || G.cur !== color ||
             !['move', 'resolve', 'flag'].includes(a0.t)) return resync();
+        if (a0.t === 'flag') return this.flag(G);
         const a = { t: a0.t, c: color, by: me.role };
         if (a.t === 'move') { a.from = a0.from; a.to = a0.to; if (a0.p) a.p = String(a0.p); }
-        if (G.clock && a.t !== 'flag') {
+        if (G.clock) {
           // The page says how much time it has left. Trust it only between what the server measured and the time at turn start.
           const min = this.timeLeft(G), max = G.clock[G.cur];
           if (min <= 0) { await this.flag(G); return; }
@@ -190,54 +220,83 @@ export class Room extends DurableObject {
         this.broadcast({ type: 'names', names: s.names }, ws);
         return;
       case 'rematch': {
-        // Only with the opponent here, since the new game's clock starts right away.
-        if (!player || this.game().phase !== 'over' || !this.presence().online[me.role === 'host' ? 'guest' : 'host']) return resync();
+        // With a clock only if the opponent is here, since the new game's clock starts right away.
+        if (!player || this.game().phase !== 'over' || (s.clock && !this.presence().online[me.role === 'host' ? 'guest' : 'host'])) return resync();
         await this.ctx.storage.put('past:' + String(s.pastCount).padStart(4, '0'), { hostColor: s.hostColor, actions: s.actions });
         s.pastCount++;
         s.round++;
         s.hostColor = R.other(s.hostColor);
         s.actions = [];
-        s.turnStart = Date.now();
+        s.turnStart = s.since = Date.now();
+        s.turnOf = 'w';
         s.grace = LATENCY;
         this.G = null;
         await this.save();
         await this.armClock();
+        await this.updateLists();
         for (const o of this.sockets()) if (o.me.role) send(o.ws, await this.stateFor(o.me));
         return;
       }
+      case 'cancel': // the host takes back a game nobody joined
+        if (me.role !== 'host' || s.joined.guest) return resync();
+        await this.removeWaiting();
+        try { await this.accounts().forget(s.code, this.seats()); } catch (_) {}
+        await this.ctx.storage.deleteAll();
+        this.s = undefined;
+        this.G = null;
+        for (const o of this.sockets()) send(o.ws, { type: 'missing' });
+        return;
       case 'sync':
         await resync();
         return this.reportRound();
     }
   }
 
+  // Resign, abort or claim the win. Before both players have moved, every way out is just an abort.
+  async endRound(ws, me, t) {
+    const s = this.s, G = this.game(), color = this.colorOf(me.role), isEarly = early(s.actions);
+    const resync = async () => send(ws, await this.stateFor(me));
+    if (!playing(G)) return resync();
+    if (t === 'claim' && (isEarly || G.clock || G.cur === color || Date.now() - this.since() < CLAIM_AFTER)) return resync();
+    if (t === 'abort' && !isEarly) return resync();
+    const a = { t: isEarly ? 'abort' : t, c: color, by: me.role };
+    if (!R.startAction(G, a)) return resync();
+    await this.record(a, 0, null);
+  }
+  async removeWaiting() {
+    try { await this.lobby().removeWaiting(this.s.code); } catch (_) {}
+  }
+
   async hello(ws, me, m) {
     const token = typeof m.token === 'string' ? m.token.slice(0, 64) : '';
     if (!token) return;
-    let s = this.s;
+    let who = null;
+    if (typeof m.session === 'string' && m.session) {
+      try { who = await this.accounts().whoami(m.session.slice(0, 64)); } catch (_) {}
+    }
+    let s = this.s, created = false;
     if (m.create && typeof m.create === 'object') {
-      if (!s) s = this.s = newRoom(me.code, m.create.clock, m.create.color, token, null, !!m.create.rated && !!R.TIME_CONTROLS[m.create.clock]);
+      if (!s) { s = this.s = newRoom(me.code, m.create.clock, m.create.color, token, null, !!m.create.rated); created = true; }
       else if (s.host !== token) return send(ws, { type: 'taken' });
     }
     if (!s) return send(ws, { type: 'missing' });
-    let role = s.host === token ? 'host' : s.guest === token ? 'guest' : null;
-    if (!role && !s.guest) { s.guest = token; role = 'guest'; }
+    const seated = key => (s.accounts?.host?.key === key ? 'host' : s.accounts?.guest?.key === key ? 'guest' : null);
+    // A seat belongs to the browser that took it, and to its account on any other device.
+    let role = s.host === token ? 'host' : s.guest === token ? 'guest' : who ? seated(who.key) : null;
+    const newGuest = !role && !s.guest;
+    if (newGuest) { s.guest = token; role = 'guest'; }
     role = role || 'watch';
     if (role !== 'watch') {
       s.accounts = s.accounts || { host: null, guest: null };
       // An unbound seat takes an account only before the round's first action, and never one the other seat holds.
-      if (!s.accounts[role] && s.actions.length === 0 && typeof m.session === 'string' && m.session) {
-        try {
-          const who = await this.env.ACCOUNTS.get(this.env.ACCOUNTS.idFromName('main')).whoami(m.session.slice(0, 64));
-          const other = s.accounts[role === 'host' ? 'guest' : 'host'];
-          // re-check after the await: the round may have started meanwhile
-          if (who && !s.accounts[role] && s.actions.length === 0 && !(other && other.key === who.key)) s.accounts[role] = { key: who.key, name: who.name };
-        } catch (_) {}
+      if (who && !s.accounts[role] && s.actions.length === 0) {
+        const other = s.accounts[role === 'host' ? 'guest' : 'host'];
+        if (!(other && other.key === who.key)) s.accounts[role] = { key: who.key, name: who.name };
       }
       s.names[role] = s.accounts[role] ? s.accounts[role].name : cleanName(m.name);
       if (!s.joined[role]) {
         s.joined[role] = true;
-        if (ready(s)) { s.turnStart = Date.now(); s.grace = LATENCY; } // both are here: White's clock starts
+        if (ready(s)) { s.turnStart = s.since = Date.now(); s.turnOf = 'w'; s.grace = LATENCY; } // both are here: White's clock starts
       }
     }
     me.token = token;
@@ -246,6 +305,14 @@ export class Room extends DurableObject {
     await this.save();
     await this.armClock();
     send(ws, await this.stateFor(me));
+    if (role !== 'watch') await this.updateLists();
+    // A game with no clock and a logged-in host stays listed by itself until someone joins.
+    if (created && !s.clock && s.accounts.host) {
+      try {
+        await this.lobby().addWaiting({ code: s.code, name: s.accounts.host.name, account: true, rating: who.rating, clock: null, color: s.hostColor, at: Date.now() });
+      } catch (_) {}
+    }
+    if (newGuest) await this.removeWaiting();
     await this.reportRound();
     this.broadcast({ type: 'names', names: s.names }, ws);
     this.broadcast({ type: 'presence', ...this.presence() }, ws);
@@ -266,22 +333,32 @@ export class Room extends DurableObject {
   async webSocketError(ws) { return this.webSocketClose(ws, 1011); }
 }
 
-// The one lobby ("Play online"). Every open page stays connected so everyone can see how many are online.
-// Pages that press search wait here; the next searcher with a different token and account is paired
-// with them into a new rated 10+5 room with a random color, and both are sent its code.
-// Every open page stays connected here: it shows how many are online and which rooms wait for a
-// second player. A waiting room lives on its host's connection, so it goes away when someone joins
-// it or the host leaves or closes the page.
+// The one lobby ("Play online"). Every open page stays connected here: it shows how many are online
+// and which games wait for a second player. Most waiting rooms live on the host's connection, so they
+// go away when the host leaves or closes the page. A game with no clock and a logged-in host is saved
+// here instead: the room adds it, and it stays until someone joins, the host cancels, or WAIT_LIMIT.
 export class Lobby extends DurableObject {
   async fetch() {
     const res = accept(this.ctx, {});
-    this.update();
+    await this.update();
     return res;
   }
-  update(closing) {
+  async update(closing) {
     const open = this.ctx.getWebSockets().filter(o => o !== closing);
-    const rooms = open.map(o => (o.deserializeAttachment() || {}).room).filter(Boolean).sort((a, b) => a.at - b.at).slice(0, 50);
+    const saved = [];
+    for (const [k, r] of await this.ctx.storage.list({ prefix: 'wait:' })) {
+      if (Date.now() - r.at > WAIT_LIMIT) await this.ctx.storage.delete(k);
+      else saved.push(r);
+    }
+    const rooms = open.map(o => (o.deserializeAttachment() || {}).room).filter(Boolean).concat(saved).sort((a, b) => a.at - b.at).slice(0, 50);
     for (const o of open) { send(o, { type: 'count', n: open.length }); send(o, { type: 'rooms', rooms }); }
+  }
+  async addWaiting(room) {
+    await this.ctx.storage.put('wait:' + room.code, room);
+    await this.update();
+  }
+  async removeWaiting(code) {
+    if (await this.ctx.storage.delete('wait:' + code)) await this.update();
   }
   async webSocketMessage(ws, data) {
     const m = parse(data);
@@ -299,11 +376,11 @@ export class Lobby extends DurableObject {
       code: m.code, name: acct ? acct.name : cleanName(m.name), account: !!acct, rating: acct ? acct.rating : null,
       clock: R.TIME_CONTROLS[m.clock] ? m.clock : null, color: m.color === 'b' ? 'b' : 'w', at: Date.now()
     } });
-    this.update();
+    await this.update();
   }
   async webSocketClose(ws, code) {
     try { ws.close(code === 1005 ? 1000 : code); } catch (_) {}
-    this.update(ws);
+    await this.update(ws);
   }
   async webSocketError(ws) { return this.webSocketClose(ws, 1011); }
 }

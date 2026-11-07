@@ -247,8 +247,28 @@ function checkNormalTurnEnd(G) {
 }
 
 // Checks an action against the rules and starts it. Returns a generator to run, or null if illegal.
+// Ends the game on the spot, on either player's turn. a.c is the player who did it.
+function endGame(G, a) {
+  if ((G.phase !== 'move' && G.phase !== 'respond') || !NAME[a.c]) return null;
+  const me = a.c, opp = other(me);
+  if (a.t === 'abort') {
+    G.result = { winner: null, aborted: true, text: 'Game aborted' };
+    G.log.push({ player: me, html: '<b>Game aborted.</b> It does not count' });
+  } else {
+    const [winner, loser] = a.t === 'resign' ? [opp, me] : [me, opp];
+    const what = a.t === 'resign' ? 'resigned' : 'stopped playing';
+    G.result = { winner, text: `${NAME[loser]} ${what}. ${NAME[winner]} wins` };
+    G.log.push({ player: winner, html: `<b>${NAME[loser]} ${what}.</b> ${NAME[winner]} wins` });
+  }
+  G.phase = 'over';
+  G.acts.push({ t: a.t, c: me });
+  return (function* () {})();
+}
+
 function startAction(G, a) {
-  if (!a || (a.c && a.c !== G.cur)) return null;
+  if (!a) return null;
+  if (a.t === 'resign' || a.t === 'claim' || a.t === 'abort') return endGame(G, a);
+  if (a.c && a.c !== G.cur) return null;
   // A player whose time is up loses.
   if (a.t === 'flag') {
     if (!G.clock || (G.phase !== 'move' && G.phase !== 'respond')) return null;

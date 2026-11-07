@@ -27,6 +27,7 @@ function makeNamespace(Cls, env) {
             async get(k) { return clone(data.get(k)); },
             async put(k, v) { data.set(k, clone(v)); },
             async delete(k) { return data.delete(k); },
+            async deleteAll() { data.clear(); },
             async list({ prefix = '', reverse = false, limit } = {}) {
               let e = [...data].filter(([k]) => k.startsWith(prefix)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
               if (reverse) e.reverse();
