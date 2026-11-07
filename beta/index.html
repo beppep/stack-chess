@@ -2441,8 +2441,10 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     document.querySelectorAll('.view').forEach(e => { e.hidden = e.id !== 'view-' + v; });
     document.body.classList.toggle('ingame', v === 'game');
     fitLayout();
+    // The tutorial and a puzzle play on the game screen, but they belong to their menu items.
+    const hash = location.hash, active = hash === '#/how' || hash === '#/rules' ? 'how' : hash.startsWith('#/puzzle/') ? 'puzzles' : v;
     document.querySelectorAll('.nav a').forEach(a => {
-      if (a.dataset.view === v) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+      if (a.dataset.view === active) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
     syncHosting();
   }
