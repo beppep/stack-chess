@@ -534,7 +534,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   </main>
   <main class="page view" id="view-puzzles" hidden>
     <h1>Puzzles</h1>
-    <p>Capture the king in the given number of turns. Resolving is part of your turn. "Mate in 2.5" means you get two turns, and then your opponent has to let it resolve and lose. "Mate in 4" means you let it resolve on your fourth turn and take the king. The computer defends as well as it can, and any move that still wins counts.</p>
+    <p>Capture the king in the given number of moves. Resolving is part of your move. "Mate in 2.5" means you get two moves, and then your opponent has to let it resolve and lose. "Mate in 4" means you let it resolve on your fourth move and take the king. The computer defends as well as it can, and any move that still wins counts.</p>
     <div id="puzzleList"></div>
   </main>
   <main class="page view" id="view-how" hidden>
@@ -2199,8 +2199,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     frag.appendChild(el('h2', '', p.title));
     frag.appendChild(el('p', 'hint', `${LEVELS.find(l => l[0] === p.level)[1]} · ${mateLabel(p)} · you play ${NAME[p.side]}`));
     const msg = PZ.state === 'solved' ? 'Solved! The king is captured.'
-      : PZ.state === 'failed' ? `Not this time: your ${turnsOf(p)} turns are used and the king survived.`
-      : `Capture the king: ${mateLabel(p).toLowerCase()}. Turns left: ${Math.max(0, turnsOf(p) - PZ.used)}.`;
+      : PZ.state === 'failed' ? `Not this time: your ${turnsOf(p)} moves are used and the king survived.`
+      : `Capture the king: ${mateLabel(p).toLowerCase()}. Moves left: ${Math.max(0, turnsOf(p) - PZ.used)}.`;
     frag.appendChild(el('p', 'note' + (PZ.state === 'failed' ? ' warn' : ''), msg));
     const row = el('div', 'btnrow');
     row.appendChild(button('Try again', PZ.state === 'failed' ? 'primary' : '', () => startPuzzle(p.id)));
