@@ -179,6 +179,21 @@ a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-rad
   width: 11cqw; height: 11cqw; background: transparent;
   box-shadow: inset 0 0 0 0.9cqw rgba(20, 16, 30, .38);
 }
+/* Tutorial: only the board, the words and the stack */
+body.tut .modebar, body.tut .controls, body.tut .side, body.tut #previewBtn, body.tut .stackcol .hint { display: none; }
+body.tut-nostack .stackcol { visibility: hidden; }
+body.tut .status { flex-wrap: wrap; justify-content: space-between; min-height: 84px; }
+body.tut .status-main { font-family: inherit; font-weight: 500; font-size: 1.1rem; letter-spacing: 0; }
+body.tut .status .status-text { flex: 1 1 260px; }
+body.tut .status .btnrow { flex: none; }
+.board.six { grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, 1fr); }
+.board.six .sq.off { display: none; }
+.board.six .pc { font-size: 12.8cqw; }
+.board.six .sq.target::after { width: 4.2cqw; height: 4.2cqw; }
+.board.six .sq.target.capture::after { width: 14.6cqw; height: 14.6cqw; }
+.sq.guide { box-shadow: inset 0 0 0 0.6cqw var(--sel); animation: guide 1.2s ease-in-out infinite; }
+@keyframes guide { 50% { box-shadow: inset 0 0 0 0.2cqw var(--sel); } }
+@media (prefers-reduced-motion: reduce) { .sq.guide { animation: none; } }
 .sq.check { background-image: radial-gradient(circle, rgba(239,91,82,.9) 0%, rgba(239,91,82,.45) 45%, transparent 72%); }
 .sq.trail.light { background-color: #e6d58f; }
 .sq.trail.dark { background-color: #a49865; }
@@ -486,7 +501,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     <div id="puzzleList"></div>
   </main>
   <main class="page view" id="view-how" hidden>
-    <h1>How to play</h1>
+    <h1>The rules</h1>
+    <a class="howlink" href="#/how">Try the interactive tutorial →</a>
     <div class="panel rules">
       <ul>
         <li><b>Moving puts the move on the stack.</b> It shows as an arrow. Nothing on the board changes yet.</li>
@@ -915,10 +931,11 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     store.set('recent', recent.slice(0, 12));
   }
 
-  const shownGame = () => V.mode === 'replay' ? REP.G : V.mode === 'puzzle' ? PZ.G : V.mode === 'cpu' ? CG : (V.mode === 'local' ? LG : (NET.code ? NET.G : freshGame()));
+  const shownGame = () => V.mode === 'replay' ? REP.G : V.mode === 'puzzle' ? PZ.G : V.mode === 'tutorial' ? TUT.G : V.mode === 'cpu' ? CG : (V.mode === 'local' ? LG : (NET.code ? NET.G : freshGame()));
   function myColors() {
     if (V.mode === 'replay') return [];
     if (V.mode === 'puzzle') return PZ.state === 'play' && !PZ.thinking ? [PZ.p.side] : [];
+    if (V.mode === 'tutorial') return tutStep().you || tutStep().resolve ? ['w'] : [];
     if (V.mode === 'local') return ['w', 'b'];
     if (V.mode === 'cpu') return [other(CPU.color)];
     return NET.code && NET.connected && !NET.watching ? [myColor()] : [];
@@ -953,6 +970,14 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   async function act(a) {
     if (!canAct()) return;
     a = withClock(shownGame(), a);
+    if (V.mode === 'tutorial') {
+      const gen = startAction(TUT.G, a);
+      if (!gen) return;
+      clearSel();
+      await animate(gen);
+      tutNext();
+      return;
+    }
     if (V.mode === 'puzzle') {
       const gen = startAction(PZ.G, a);
       if (!gen) return;
@@ -1226,7 +1251,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (mode === 'cpu') V.flipped = CPU.color === 'w';
     if (mode === 'puzzle') V.flipped = PZ.p.side === 'b';
     if (mode === 'online' && NET.code) orient();
-    if (mode === 'local') V.flipped = false;
+    if (mode === 'local' || mode === 'tutorial') V.flipped = false;
     renderAll();
     if (mode === 'online') pump();
     if (mode === 'cpu') cpuTurn();
@@ -1291,6 +1316,12 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     const real = shownGame();
     const G = V.preview || real, st = G.st;
     legalNow = canAct() ? availableMoves(real) : [];
+    const tut = V.mode === 'tutorial', step = tut ? tutStep() : {}, six = tut && TUT.six;
+    if (tut) legalNow = tutMoves(legalNow);
+    document.body.classList.toggle('tut', tut);
+    document.body.classList.toggle('tut-nostack', !!step.noStack && !real.stack.length);
+    boardEl.classList.toggle('six', six);
+    $('arrows').setAttribute('viewBox', six ? '0 200 600 600' : '0 0 800 800');
     $('previewBtn').disabled = !V.preview && (!real.stack.length || V.busy);
     $('previewBtn').classList.toggle('held', !!V.preview);
     if (V.sel !== null && !V.preview && !legalNow.length) clearSel();
@@ -1310,6 +1341,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       const [r, c] = rc(i);
       const cls = ['sq', (r + c) % 2 ? 'dark' : 'light'];
       if (V.sel === s) cls.push('sel');
+      if (six && (r < 2 || c > 5)) cls.push('off');
+      if (typeof step.you === 'string' && V.sel === null && !V.busy && sqName(s) === step.you.slice(0, 2)) cls.push('guide');
       if (targets.has(s)) { cls.push('target'); if (p || targets.get(s).flag === 'ep') cls.push('capture'); }
       if (checkSq.includes(s)) cls.push('check');
       for (const t of V.sel === null ? G.trail : []) { if (t.ok && (t.from === s || t.to === s)) cls.push('trail'); if (!t.ok && t.from === s) cls.push('fizz'); }
@@ -1414,6 +1447,22 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     rb.disabled = !(canAct() && G.phase === 'respond');
     rb.classList.toggle('b', c === 'b');
     rb.textContent = G.phase === 'resolving' ? 'Resolving…' : (G.phase === 'respond' ? `${NAME[c]}: let it resolve` : 'Let it resolve');
+    rb.hidden = V.mode === 'tutorial' && !tutStep().resolve;
+    if (V.mode === 'tutorial') {
+      const st = tutStep();
+      if (st.resolve && G.phase !== 'resolving') rb.textContent = 'Let it resolve';
+      banner.hidden = true;
+      s.innerHTML = text(st.say, '');
+      if (st.next) { const row = el('div', 'btnrow'); row.appendChild(button(st.next, 'primary', tutNext)); s.appendChild(row); }
+      if (st.end) {
+        const row = el('div', 'btnrow');
+        row.appendChild(button('Try the easy puzzles', 'primary', () => go('#/puzzles')));
+        row.appendChild(button('Start over', '', startTutorial));
+        row.appendChild(button('All the rules', '', () => go('#/rules')));
+        s.appendChild(row);
+      }
+      return;
+    }
 
     if (G.phase === 'over' && (!online || NET.code)) {
       const w = G.result.winner;
@@ -1899,6 +1948,63 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     { id: 'h3', level: 'hard', title: 'Crowded corner', side: 'w', w: 'Kb1 Rg5 Nb6 a6', b: 'Kc8 c5 a2 Nd2', stack: ['g5-c5', 'd2-b3'], mate: 4.5 }
   ];
   const LEVELS = [['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']];
+
+  // ---------- Tutorial ----------
+  // One step at a time. board: starts a position (null is the normal start, an object a small 6x6 one).
+  // you: wait for a move (true for any, or the one move). opp: Black plays, or lets it resolve.
+  // resolve: wait for the button, which only shows here. next: wait for a button with this text.
+  const TUTORIAL = [
+    { board: null, noStack: true, you: true, say: 'Try making a move.' },
+    { opp: 'e7-e5', wait: 2400, say: 'Your move went on the stack. It hasn\u2019t happened yet, and Black gets to answer first.' },
+    { you: true, say: 'Black put a move on the stack too. Now make another move, with a different piece.' },
+    { opp: 'g8-f6', wait: 1200, say: 'Black answers again.' },
+    { resolve: true, say: 'Nothing has happened on the board yet. Try the resolve button.' },
+    { next: 'Next', say: 'Nice! The moves happened from the top of the stack down, so the last move went first.' },
+    { board: { w: 'Rb2', b: 'Ne2' }, you: 'b2-e2', say: 'Your rook attacks the knight. Capture it.' },
+    { opp: 'e2-d4', wait: 1800, say: 'Your rook is on its way, but the capture is only on the stack.' },
+    { resolve: true, say: 'Black answered by moving the knight. Let it resolve.' },
+    { next: 'Next', say: 'The knight jumped away first, so your rook captured nothing. It just moved.' },
+    { board: { w: 'Nf4 d3', b: 'Ra4', stack: ['a4-f4'] }, you: 'd3-d4', say: 'Black\u2019s rook is trying to capture your knight. That move is already on the stack. Block it with your pawn.' },
+    { opp: 'resolve', wait: 1800, say: 'Your pawn\u2019s move is on top of the stack, so it goes first. Black lets it resolve.' },
+    { next: 'Next', say: 'The pawn got in the way. A move that is illegal when it should resolve fizzles, and nothing happens.' },
+    { end: true, say: 'That\u2019s the game! You win by capturing the king. There is no check or checkmate, so your opponent can always try to answer. Try some easy puzzles next.' }
+  ];
+  const TUT = { i: 0, G: freshGame(), six: false };
+  const tutStep = () => TUTORIAL[TUT.i];
+  const tutMoves = moves => {
+    const s = tutStep();
+    return s.you === true ? moves : moves.filter(m => sqName(m.from) + '-' + sqName(m.to) === s.you);
+  };
+  function tutNext() {
+    if (V.mode !== 'tutorial' || TUT.i >= TUTORIAL.length - 1) return;
+    TUT.i++;
+    tutRun();
+  }
+  function tutRun() {
+    const s = tutStep();
+    if (s.board !== undefined) {
+      TUT.G = s.board ? puzzleGame({ ...s.board, side: 'w' }) : freshGame(null);
+      TUT.six = !!s.board;
+      clearSel();
+    }
+    render();
+    if (!s.opp) return;
+    const G = TUT.G;
+    setTimeout(async () => {
+      if (G !== TUT.G || V.mode !== 'tutorial' || V.busy) return;
+      const [from, to] = s.opp.split('-').map(n => (8 - +n[1]) * 8 + FILES.indexOf(n[0]));
+      const gen = startAction(G, s.opp === 'resolve' ? { t: 'resolve' } : { t: 'move', from, to });
+      if (gen) await animate(gen);
+      if (G === TUT.G) tutNext();
+    }, s.wait);
+  }
+  function startTutorial() {
+    if (V.busy) { setTimeout(startTutorial, 200); return; }
+    TUT.i = 0;
+    TUT.G = freshGame(null);
+    setMode('tutorial');
+    tutRun();
+  }
   const PZ = { p: null, G: freshGame(), used: 0, afterResolve: false, state: 'play', thinking: false };
   const solvedSet = () => new Set(store.get('puzzles-solved') || []);
   const turnsOf = p => Math.floor(p.mate);
@@ -2204,7 +2310,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   pv.addEventListener('contextmenu', e => e.preventDefault());
   // Hovering "Let it resolve" with a mouse previews it too.
   const rbtn = $('resolveBtn');
-  rbtn.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse' && !rbtn.disabled) startPreview(); });
+  rbtn.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse' && !rbtn.disabled && V.mode !== 'tutorial') startPreview(); });
   rbtn.addEventListener('pointerleave', endPreview);
   $('flipBtn').addEventListener('click', () => { V.flipped = !V.flipped; render(); });
   // Undo: go back to just before your last action in this game.
@@ -2381,8 +2487,10 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (name === 'login' || name === 'signup') { renderAuth(name); show(name); return; }
     if (name === 'puzzle' && arg) { show('game'); startPuzzle(arg); return; }
     if (name === 'puzzles' || name === 'extras') { renderPuzzleList(); show('puzzles'); return; }
+    if (name === 'how') { show('game'); startTutorial(); return; }
+    if (name === 'rules') { show('how'); return; }
     if (name === 'leaderboard') renderLeaderboard();
-    show(['leaderboard', 'how'].includes(name) ? name : 'home');
+    show(name === 'leaderboard' ? name : 'home');
   }
 
   // Header: Log in / Sign up, or "name (rating)" and Log out.
