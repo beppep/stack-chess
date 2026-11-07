@@ -183,7 +183,7 @@ a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-rad
 body.tut .modebar, body.tut .controls, body.tut .side, body.tut #previewBtn, body.tut .stackcol .hint { display: none; }
 body.tut-nostack .stackcol { visibility: hidden; }
 body.tut .status { flex-wrap: wrap; justify-content: space-between; min-height: 84px; }
-body.tut .status-main { font-family: inherit; font-weight: 500; font-size: 1.1rem; letter-spacing: 0; }
+body.tut .status-main { font-family: inherit; font-weight: 500; font-size: 1.45rem; line-height: 1.35; letter-spacing: 0; }
 body.tut .status .status-text { flex: 1 1 260px; }
 body.tut .status .btnrow { flex: none; }
 .board.six { grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(6, 1fr); }
@@ -1452,8 +1452,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       const st = tutStep();
       if (st.resolve && G.phase !== 'resolving') rb.textContent = 'Let it resolve';
       banner.hidden = true;
-      s.innerHTML = text(st.say, '');
+      s.innerHTML = text(TUT.say, '');
       if (st.next) { const row = el('div', 'btnrow'); row.appendChild(button(st.next, 'primary', tutNext)); s.appendChild(row); }
+      if (st.opp && st.say && !TUT.going) { const row = el('div', 'btnrow'); row.appendChild(button('OK', 'primary', tutOpp)); s.appendChild(row); }
       if (st.end) {
         const row = el('div', 'btnrow');
         row.appendChild(button('Try the easy puzzles', 'primary', () => go('#/puzzles')));
@@ -1951,28 +1952,29 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 
   // ---------- Tutorial ----------
   // One step at a time. board: starts a position (null is the normal start, an object a small 6x6 one).
-  // you: wait for a move (true for any, or the one move). opp: Black plays, or lets it resolve.
+  // you: wait for a move (true for any, or the one move). opp: Black plays, or lets it resolve, once
+  // you press OK on its text. A step without text just keeps the last text and plays after wait.
   // resolve: wait for the button, which only shows here. next: wait for a button with this text.
   const TUTORIAL = [
     { board: null, noStack: true, you: true, say: 'Try making a move.' },
-    { opp: 'e7-e5', wait: 2400, say: 'Your move went on the stack. It hasn\u2019t happened yet, and Black gets to answer first.' },
+    { opp: 'e7-e5', say: 'Your move went on the stack. It hasn\u2019t happened yet, and Black gets to answer first.' },
     { you: true, say: 'Black put a move on the stack too. Now make another move, with a different piece.' },
-    { opp: 'g8-f6', wait: 1200, say: 'Black answers again.' },
+    { opp: 'g8-f6', wait: 500 },
     { resolve: true, say: 'Nothing has happened on the board yet. Try the resolve button.' },
     { next: 'Next', say: 'Nice! The moves happened from the top of the stack down, so the last move went first.' },
     { board: { w: 'Rb2', b: 'Ne2' }, you: 'b2-e2', say: 'Your rook attacks the knight. Capture it.' },
-    { opp: 'e2-d4', wait: 1800, say: 'Your rook is on its way, but the capture is only on the stack.' },
+    { opp: 'e2-d4', say: 'Your rook is on its way, but the capture is only on the stack.' },
     { resolve: true, say: 'Black answered by moving the knight. Let it resolve.' },
     { next: 'Next', say: 'The knight jumped away first, so your rook captured nothing. It just moved.' },
     { board: { w: 'Re2', b: 'Re5', stack: ['e5-e2'] }, you: 'e2-e5', say: 'Black’s rook is trying to capture your rook, but that move is only on the stack. Take it back: capture the rook first.' },
-    { opp: 'resolve', wait: 1800, say: 'Your capture is on top of the stack, so it goes first. Black lets it resolve.' },
+    { opp: 'resolve', say: 'Your capture is on top of the stack, so it goes first. Black lets it resolve.' },
     { next: 'Next', say: 'Your rook got there first. Black’s rook is gone, and its move went with it.' },
     { board: { w: 'Nf4 d3', b: 'Ra4', stack: ['a4-f4'] }, you: 'd3-d4', say: 'Black\u2019s rook is trying to capture your knight. That move is already on the stack. Block it with your pawn.' },
-    { opp: 'resolve', wait: 1800, say: 'Your pawn\u2019s move is on top of the stack, so it goes first. Black lets it resolve.' },
+    { opp: 'resolve', say: 'Your pawn\u2019s move is on top of the stack, so it goes first. Black lets it resolve.' },
     { next: 'Next', say: 'The pawn got in the way. A move that is illegal when it should resolve fizzles, and nothing happens.' },
     { end: true, say: 'That\u2019s the game! You win by capturing the king. There is no check or checkmate, so your opponent can always try to answer. Try some easy puzzles next.' }
   ];
-  const TUT = { i: 0, G: freshGame(), six: false };
+  const TUT = { i: 0, G: freshGame(), six: false, say: '', going: false };
   const tutStep = () => TUTORIAL[TUT.i];
   const tutMoves = moves => {
     const s = tutStep();
@@ -1990,16 +1992,19 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       TUT.six = !!s.board;
       clearSel();
     }
+    TUT.say = s.say || TUT.say;
     render();
-    if (!s.opp) return;
-    const G = TUT.G;
-    setTimeout(async () => {
-      if (G !== TUT.G || V.mode !== 'tutorial' || V.busy) return;
-      const [from, to] = s.opp.split('-').map(n => (8 - +n[1]) * 8 + FILES.indexOf(n[0]));
-      const gen = startAction(G, s.opp === 'resolve' ? { t: 'resolve' } : { t: 'move', from, to });
-      if (gen) await animate(gen);
-      if (G === TUT.G) tutNext();
-    }, s.wait);
+    if (s.opp && !s.say) { const G = TUT.G; setTimeout(() => { if (G === TUT.G) tutOpp(); }, s.wait); }
+  }
+  async function tutOpp() {
+    const s = tutStep(), G = TUT.G;
+    if (!s.opp || TUT.going || V.mode !== 'tutorial' || V.busy) return;
+    TUT.going = true;
+    const [from, to] = s.opp.split('-').map(n => (8 - +n[1]) * 8 + FILES.indexOf(n[0]));
+    const gen = startAction(G, s.opp === 'resolve' ? { t: 'resolve' } : { t: 'move', from, to });
+    if (gen) await animate(gen);
+    TUT.going = false;
+    if (G === TUT.G) tutNext();
   }
   function startTutorial() {
     if (V.busy) { setTimeout(startTutorial, 200); return; }
