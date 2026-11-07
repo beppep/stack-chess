@@ -86,7 +86,6 @@ a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-rad
 .mode .ic { font-family: var(--font-glyph); font-size: 1.35rem; width: 1.35rem; text-align: center; font-weight: 400; }
 .online-count { color: var(--muted); font-size: .9rem; margin-top: -4px; }
 .online-count:empty { display: none; }
-#yourTurn[hidden] { display: none; }
 #gamesBody .games { max-height: none; }
 .logged-in .btn.mode.how { order: 1; } /* How to play comes first for newcomers, last once logged in */
 .online-count:not(:empty)::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
@@ -420,12 +419,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 .clk.active.b { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
 .clk:not(.active) .t { opacity: .6; }
 .clk.low .t { color: var(--fizzle); opacity: 1; }
-.clocksel { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-weight: 700; font-size: .95rem; }
-.clocksel select {
-  font: inherit; font-weight: 400; color: var(--fg); background: var(--panel-2);
-  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
-}
-.clocksel select:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; }
 
 /* Chat */
 .chat { display: flex; flex-direction: column; gap: 8px; }
@@ -621,19 +614,21 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     <aside class="side">
       <div class="controls">
         <button class="btn" id="flipBtn" type="button">Flip board</button>
-        <label class="clocksel" title="Applies to new games">Clock
-          <select id="clockSel">
-            <option value="off">No clock</option>
-            <option value="1+1">1 min + 1 s</option>
-            <option value="3+2">3 min + 2 s</option>
-            <option value="5+3">5 min + 3 s</option>
-            <option value="10+5">10 min + 5 s</option>
-          </select>
-        </label>
         <span class="spacer"></span>
         <button class="btn" id="replayBtn" type="button">Copy replay link</button>
         <button class="btn" id="undoBtn" type="button">Undo</button>
         <button class="btn" id="newBtn" type="button">New game</button>
+      </div>
+      <div class="panel cpu" id="clockPick" hidden>
+        <h2>Clock</h2>
+        <div class="btnrow" id="clockBtns"></div>
+        <select id="clockSel" hidden>
+          <option value="off">No clock</option>
+          <option value="1+1">1+1</option>
+          <option value="3+2">3+2</option>
+          <option value="5+3">5+3</option>
+          <option value="10+5">10+5</option>
+        </select>
       </div>
       <div class="panel cpu" id="cpuPanel" hidden>
         <h2>Computer</h2>
@@ -880,6 +875,19 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   const clockSel = document.getElementById('clockSel');
   try { const saved = localStorage.getItem('stackchess:tc'); if (saved && (saved === 'off' || TIME_CONTROLS[saved])) clockSel.value = saved; } catch (_) {}
   const chosenTC = () => timeControl(clockSel.value);
+  // A row of buttons for the clock setting. The hidden select holds the value.
+  function clockButtons() {
+    const row = el('div', 'btnrow');
+    for (const o of clockSel.options) {
+      row.appendChild(button(o.textContent, clockSel.value === o.value ? 'primary' : '', () => {
+        clockSel.value = o.value;
+        clockSel.dispatchEvent(new Event('change'));
+      }));
+    }
+    return row;
+  }
+  // A game has started after the first move, not counting the computer's opening move when it plays White.
+  const notStarted = (G, cpu) => G.acts.length <= (cpu && CPU.color === 'w' ? 1 : 0);
   let LG = freshGame(chosenTC());     // the same-screen game
   let CG = freshGame(chosenTC());     // the game against the computer
   const CPU = { color: 'b', level: 'normal', thinking: false };
@@ -1429,14 +1437,19 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       el.innerHTML = html;
       el.setAttribute('aria-label', sqName(s) + (p ? ` ${NAME[p.c]} ${PNAME[p.t]}` : ''));
     }
-    $('newBtn').hidden = V.mode === 'online' || V.mode === 'replay' || V.mode === 'puzzle';
+    // Settings show before a game starts and again when it ends; New game only once there's a game to restart.
+    const solo = V.mode === 'local' || V.mode === 'cpu', cpu = V.mode === 'cpu';
+    const fresh = solo && notStarted(real, cpu), setup = solo && (fresh || real.phase === 'over');
+    $('newBtn').hidden = !solo || fresh;
+    $('flipBtn').hidden = cpu || fresh;
+    $('clockPick').hidden = !setup;
     $('undoBtn').hidden = V.mode === 'online' || V.mode === 'replay' || V.mode === 'puzzle';
     $('replayBtn').hidden = V.mode === 'replay' || V.mode === 'puzzle' || !real.acts.length;
     $('puzzlePanel').hidden = V.mode !== 'puzzle';
     $('replayPanel').hidden = V.mode !== 'replay';
     if (V.mode === 'replay') renderReplay();
     $('undoBtn').disabled = V.busy || CPU.thinking || !undoEntry();
-    $('cpuPanel').hidden = V.mode !== 'cpu';
+    $('cpuPanel').hidden = !cpu || !setup;
     $('evalbar').hidden = V.mode !== 'cpu';
     $('onlinePanel').hidden = V.mode !== 'online';
     renderArrows(G);
@@ -1714,12 +1727,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       frag.classList.add('roomsgrid');
       frag.append(left, right);
       right.appendChild(el('h2', '', 'Host a room'));
-      const clockRow = el('div', 'btnrow'), pick = clockSel.cloneNode(true);
-      pick.id = 'roomClock';
-      pick.value = clockSel.value;
-      pick.addEventListener('change', () => { clockSel.value = pick.value; clockSel.dispatchEvent(new Event('change')); renderOnline(); });
-      clockRow.append(Object.assign(el('label', 'label', 'Clock'), { htmlFor: 'roomClock' }), pick);
-      right.appendChild(clockRow);
+      right.appendChild(el('p', 'label', 'Clock'));
+      right.appendChild(clockButtons());
       right.appendChild(el('p', 'label', 'You play'));
       const colors = el('div', 'btnrow');
       for (const [c, t] of [['random', 'Random'], ['w', 'White'], ['b', 'Black']]) {
@@ -2355,8 +2364,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   clockSel.addEventListener('change', () => {
     try { localStorage.setItem('stackchess:tc', clockSel.value); } catch (_) {}
     // A game that hasn't started yet switches right away; otherwise it applies to the next game.
-    if (!LG.log.length) LG = freshGame(chosenTC());
-    if (!CG.log.length && !CPU.thinking) { CG = freshGame(chosenTC()); cpuTurn(); }
+    if (notStarted(LG)) LG = freshGame(chosenTC());
+    if (notStarted(CG, true) && !CPU.thinking && !V.busy) { CG = freshGame(chosenTC()); cpuTurn(); }
+    $('clockBtns').replaceChildren(clockButtons());
     render();
     renderOnline();
   });
@@ -2716,6 +2726,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   renderAccount();
   renderAll();
   showTurnCount();
+  $('clockBtns').replaceChildren(clockButtons());
   setInterval(() => { if (!document.hidden) refreshGames(); }, 60000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshGames(); });
   // A saved login is checked once: a 401 means it ended, no answer (offline) keeps it.
