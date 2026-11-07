@@ -106,6 +106,9 @@ a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-rad
 .stackcol > .panel { min-height: 0; overflow: auto; flex: 0 1 auto; }
 .stackcol > .status, .stackcol > .clocks, .stackcol > .banner { flex: none; }
 .stackcol .stack { margin-top: 12px; }
+/* Only the list of moves scrolls: the resolve button above it stays put */
+.stackcol > .panel:not(.chat) { display: flex; flex-direction: column; }
+.stackcol > .panel:not(.chat) > .stack { flex: 0 1 auto; min-height: 80px; overflow-y: auto; scrollbar-width: thin; }
 .stackcol { container-type: inline-size; }
 @container (max-width: 262px) { .card .pill { display: none; } }
 .side { grid-area: side; min-height: 0; overflow: hidden auto; }
@@ -138,11 +141,11 @@ html[data-layout="tall"] .boardrow { width: var(--board, 100%); max-width: 100%;
 html[data-layout="tall"] .stackcol > .panel { order: 5; overflow: visible; }
 html[data-layout="tall"] .stackcol > .chat { order: 6; }
 html[data-layout="tall"] .side { order: 8; overflow: visible; }
-html[data-layout="tall"] .stackcol > .panel:not(.chat) { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; }
+html[data-layout="tall"] .stackcol > .panel:not(.chat) { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; padding: 8px; }
 html[data-layout="tall"] .stackcol h2, html[data-layout="tall"] .stackcol .hint { display: none; }
 html[data-layout="tall"] #resolveBtn { flex: 2 1 0; width: auto; min-height: 56px; }
 html[data-layout="tall"] #previewBtn { flex: 1 1 0; }
-html[data-layout="tall"] .stackcol .stack { width: 100%; margin-top: 0; }
+html[data-layout="tall"] .stackcol > .panel:not(.chat) > .stack { width: 100%; margin-top: 0; min-height: 0; overflow: visible; }
 html[data-layout="tall"] body.ingame { padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); padding-top: 8px; }
 html[data-layout="tall"] body.ingame .app { gap: 8px; }
 html[data-layout="tall"] body.tut .status { min-height: 150px; }
@@ -562,7 +565,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     <div class="tutbtns">
       <a class="btn primary" href="#/puzzles">Try the easy puzzles</a>
       <a class="btn" href="#/">Main menu</a>
-      <button class="btn" id="tutAgain" type="button">Start over</button>
     </div>
   </main>
 
@@ -661,10 +663,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 
       <div class="panel" id="onlinePanel" hidden>
         <div id="onlineBody"></div>
-      </div>
-
-      <div class="panel">
-        <a class="howlink" href="#/how">How to play →</a>
       </div>
 
       <div class="panel">
@@ -2062,7 +2060,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     TUT.going = false;
     if (G === TUT.G) tutNext();
   }
-  document.getElementById('tutAgain').addEventListener('click', () => { show('game'); startTutorial(); });
   function startTutorial() {
     if (V.busy) { setTimeout(startTutorial, 200); return; }
     TUT.i = 0;
