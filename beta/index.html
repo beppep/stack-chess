@@ -1948,7 +1948,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     { id: 'e4', level: 'easy', title: 'Knight and bishop', side: 'w', w: 'Kb3 Nb1 Bg4', b: 'Kd1 b4', mate: 2.5 },
     { id: 'e6', level: 'easy', title: 'Waiting game', side: 'w', w: 'Kh7 Bh3', b: 'Kf5 b7', mate: 4 },
     { id: 'm1', level: 'medium', title: 'The pawn bites', side: 'w', w: 'Kg1 Ne3 g4', b: 'Kf5 Rg2', mate: 3.5 },
-    { id: 'm3', level: 'medium', title: 'The pawn bites back', side: 'w', w: 'Kg1 Ne3 g4', b: 'Kf5 Rg2 a7', stack: ['g4-f5', 'g2-g4'], mate: 3 },
+    { id: 'm3', level: 'medium', title: 'The pawn bites back', side: 'w', w: 'Kg1 Ne3 g4', b: 'Kf5 Rg2 a7', stack: ['g4-f5', 'g2-g4'], mate: 3, noKing: true },
     { id: 'm2', level: 'medium', title: 'Quiet queen', side: 'w', w: 'Kh1 Qc1', b: 'Kd6', mate: 3.5 },
     { id: 'm4', level: 'medium', title: 'Rook lift', side: 'w', w: 'Ke4 Rh3 Nf4 g3', b: 'Kh5 Bb7 c3', mate: 4 },
     { id: 'm5', level: 'medium', title: 'Double attack', side: 'w', w: 'Kb1 Rf7 Ng6 g4', b: 'Ke7 Bd3 g3', stack: ['g6-e7', 'e7-f6'], mate: 3 },
@@ -2054,9 +2054,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   }
   // The defender's choice: an escape if there is one, else the line that holds out longest. Between
   // equally good options it fights the stack: it takes a piece that has a move on the stack, with
-  // another piece than the king if it can.
-  function defend(s, att, k) {
-    let best = null, bestScore = -1;
+  // another piece than the king if it can. noKing: a king that can't escape stays put if anything else can move.
+  function defend(s, att, k, noKing) {
+    let best = null, bestScore = -Infinity;
     for (const d of sActions(s)) {
       const c = sApply(s, d);
       if (c.winner) { if (c.winner !== att) return d; if (!best) best = d; continue; }
@@ -2064,7 +2064,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       while (need <= k && !attWins(c, att, need)) need++; // need > k: the king escapes
       const target = d.t === 'move' && s.st.board[d.m.to];
       const fights = !!target && target.c !== s.cur && s.stack.some(e => e.pieceId === target.id);
-      const score = need * 3 + (fights ? (s.st.board[d.m.from].t === 'k' ? 1 : 2) : 0);
+      const moved = d.m && (d.t === 'resolve-move' ? d.r.st : s.st).board[d.m.from];
+      const score = need * 3 + (fights ? (s.st.board[d.m.from].t === 'k' ? 1 : 2) : 0) - (noKing && need <= k && moved && moved.t === 'k' ? 100 : 0);
       if (score > bestScore) { best = d; bestScore = score; }
     }
     return best;
@@ -2118,7 +2119,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     setTimeout(async () => {
       if (G !== PZ.G) return;
       PZ.afterResolve = false;
-      const d = defend(sFrom(G), att, turnsOf(PZ.p) - PZ.used);
+      const d = defend(sFrom(G), att, turnsOf(PZ.p) - PZ.used, PZ.p.noKing);
       PZ.thinking = false;
       if (!d) { finishPuzzle('failed'); return; } // the defender has no move: a draw
       const a = toAction(d);
