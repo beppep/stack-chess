@@ -855,7 +855,8 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
   }
   // Material for player c, where each enemy piece attacking a piece takes 10% off its value (one 90%,
   // two 81%, ...) unless that attacker is attacked itself,
-  // and a king attacked by two or more counts as half a lost game for its owner.
+  // each piece attacking a king costs its owner 10, and a king attacked by two or more counts as half
+  // a lost game.
   function threatMaterial(st, c) {
     const hits = new Array(64).fill(0), fresh = new Array(64).fill(0), lines = [];
     for (let sq = 0; sq < 64; sq++) {
@@ -869,7 +870,7 @@ button.btn.small { padding: 7px 12px; font-size: .92rem; }
       const p = st.board[sq];
       if (!p) continue;
       const sign = p.c === c ? 1 : -1, doubled = hits[sq] >= 2;
-      if (p.t === 'k') { if (doubled) score -= sign * WIN / 2; }
+      if (p.t === 'k') { score -= sign * 10 * hits[sq]; if (doubled) score -= sign * WIN / 2; }
       else score += sign * VAL[p.t] * 0.9 ** fresh[sq];
     }
     return score;
