@@ -2064,8 +2064,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       while (need <= k && !attWins(c, att, need)) need++; // need > k: the king escapes
       const target = d.t === 'move' && s.st.board[d.m.to];
       const fights = !!target && target.c !== s.cur && s.stack.some(e => e.pieceId === target.id);
-      const moved = d.m && (d.t === 'resolve-move' ? d.r.st : s.st).board[d.m.from];
-      const score = need * 3 + (fights ? (s.st.board[d.m.from].t === 'k' ? 1 : 2) : 0) - (noKing && moved && moved.t === 'k' ? 100 : 0);
+      const board = (d.t === 'resolve-move' ? d.r.st : s.st).board, moved = d.m && board[d.m.from];
+      const intoCheck = moved && moved.t === 'k' && attacked(board, d.m.to, att); // a king doesn't step into an attack for nothing
+      const score = need * 3 + (fights ? (s.st.board[d.m.from].t === 'k' ? 1 : 2) : 0) - (noKing && moved && moved.t === 'k' ? 100 : 0) - (intoCheck ? 0.5 : 0);
       if (score > bestScore) { best = d; bestScore = score; }
     }
     return best;
