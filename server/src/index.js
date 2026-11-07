@@ -3,7 +3,7 @@
 //   /lobby/play  the one Lobby: counts who is online and lists the games waiting for a second player
 // Both are WebSocket endpoints. The page sends JSON messages and gets JSON messages back.
 import { DurableObject } from 'cloudflare:workers';
-import '../../beta/rules.js';
+import '../../rules.js';
 import { Accounts } from './accounts.js';
 
 export { Accounts };
