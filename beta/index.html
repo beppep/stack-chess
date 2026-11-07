@@ -1441,7 +1441,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     const solo = V.mode === 'local' || V.mode === 'cpu', cpu = V.mode === 'cpu';
     const fresh = solo && notStarted(real, cpu), setup = solo && (fresh || real.phase === 'over');
     $('newBtn').hidden = !solo || fresh;
-    $('flipBtn').hidden = cpu || fresh;
+    $('flipBtn').hidden = cpu || fresh || V.mode === 'puzzle';
     $('clockPick').hidden = !setup;
     $('undoBtn').hidden = V.mode === 'online' || V.mode === 'replay' || V.mode === 'puzzle';
     $('replayBtn').hidden = V.mode === 'replay' || V.mode === 'puzzle' || !real.acts.length;
