@@ -2012,7 +2012,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     { id: 'm3', level: 'medium', title: 'The pawn bites back', side: 'w', w: 'Kg1 Ne3 g4', b: 'Kf5 Rg2 a7', stack: ['g4-f5', 'g2-g4'], mate: 2, noKing: true },
     { id: 'm4', level: 'medium', title: 'Rook lift', side: 'w', w: 'Ke4 Rh3 Nf4 g3', b: 'Kh5 Bb7 c3', mate: 4 },
     { id: 'm5', level: 'medium', title: 'Double attack', side: 'w', w: 'Kb1 Rf7 Ng6 g4', b: 'Ke7 Bd3 g3', stack: ['g6-e7', 'e7-f6'], mate: 3 },
-    { id: 'm2', level: 'hard', title: 'Quiet queen', side: 'w', w: 'Kh1 Qc1', b: 'Kd6', mate: 3.5 },
+    { id: 'm2', level: 'hard', title: 'Quiet queen', side: 'w', w: 'Kh1 Qc1', b: 'Kd6', mate: 3.5, center: true },
     { id: 'h1', level: 'hard', title: 'Only one way', side: 'w', w: 'Kb1 Rg5', b: 'Kc8 c5', mate: 4.5 },
     { id: 'h2', level: 'hard', title: 'Knight watch', side: 'w', w: 'Kb1 Rg5 Nb6', b: 'Kc8 c5 e4', mate: 4 },
     { id: 'h3', level: 'hard', title: 'Crowded corner', side: 'w', w: 'Kb1 Rg5 Nb6 a6', b: 'Kc8 c5 a2 Nd2', stack: ['g5-c5', 'd2-b3'], mate: 4.5 }
@@ -2115,7 +2115,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   // The defender's choice: an escape if there is one, else the line that holds out longest. Between
   // equally good options it fights the stack: it takes a piece that has a move on the stack, with
   // another piece than the king if it can. noKing: the king stays put if anything else can move.
-  function defend(s, att, k, noKing) {
+  // center: among equal moves, pick the one that ends nearest the middle of the board.
+  function defend(s, att, k, noKing, center) {
     let best = null, bestScore = -Infinity;
     for (const d of sActions(s)) {
       const c = sApply(s, d);
@@ -2126,7 +2127,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       const fights = !!target && target.c !== s.cur && s.stack.some(e => e.pieceId === target.id);
       const board = (d.t === 'resolve-move' ? d.r.st : s.st).board, moved = d.m && board[d.m.from];
       const intoCheck = moved && moved.t === 'k' && attacked(board, d.m.to, att); // a king doesn't step into an attack for nothing
-      const score = need * 3 + (fights ? (s.st.board[d.m.from].t === 'k' ? 1 : 2) : 0) - (noKing && moved && moved.t === 'k' ? 100 : 0) - (intoCheck ? 0.5 : 0);
+      const score = need * 3 + (fights ? (s.st.board[d.m.from].t === 'k' ? 1 : 2) : 0) - (noKing && moved && moved.t === 'k' ? 100 : 0) - (intoCheck ? 0.5 : 0)
+        - (center && d.m ? 0.05 * (Math.abs(d.m.to % 8 - 3.5) + Math.abs((d.m.to >> 3) - 3.5)) : 0); // center: head for the middle
       if (score > bestScore) { best = d; bestScore = score; }
     }
     return best;
@@ -2180,7 +2182,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     setTimeout(async () => {
       if (G !== PZ.G) return;
       PZ.afterResolve = false;
-      const d = defend(sFrom(G), att, turnsOf(PZ.p) - PZ.used, PZ.p.noKing);
+      const d = defend(sFrom(G), att, turnsOf(PZ.p) - PZ.used, PZ.p.noKing, PZ.p.center);
       PZ.thinking = false;
       if (!d) { finishPuzzle('failed'); return; } // the defender has no move: a draw
       const a = toAction(d);
