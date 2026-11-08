@@ -2015,7 +2015,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     { id: 'm2', level: 'hard', title: 'Quiet queen', side: 'w', w: 'Kh1 Qc1', b: 'Kd6', mate: 3.5, center: true },
     { id: 'h1', level: 'hard', title: 'Only one way', side: 'w', w: 'Kb1 Rg5', b: 'Kc8 c5', mate: 4.5 },
     { id: 'h2', level: 'hard', title: 'Knight watch', side: 'w', w: 'Kb1 Rg5 Nb6', b: 'Kc8 c5 e4', mate: 4 },
-    { id: 'h3', level: 'hard', title: 'Crowded corner', side: 'w', w: 'Kb1 Rg5 Nb6 a6', b: 'Kc8 c5 a2 Nd2', stack: ['g5-c5', 'd2-b3'], mate: 4.5 }
+    { id: 'h3', level: 'hard', title: 'Crowded corner', side: 'w', w: 'Kb1 Rg5 Nb6 a6', b: 'Kc8 c5 a2 Nd2', stack: ['g5-c5', 'd2-b3'], mate: 4.5 },
+    { id: 'h4', level: 'hard', title: 'Block yourself', side: 'w', w: 'Kc8 Qe4 c3', b: 'Ka6 a7 b6', mate: 4.5 }
   ];
   const LEVELS = [['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']];
 
@@ -2155,7 +2156,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   const mateLabel = p => `Mate in ${p.mate}`;
   function startPuzzle(id) {
     const p = PUZZLES.find(x => x.id === id);
-    if (!p || V.busy) { go('#/puzzles'); return; }
+    if (!p) { go('#/puzzles'); return; }
+    if (V.busy) { setTimeout(() => { if (location.hash === '#/puzzle/' + id) startPuzzle(id); }, 200); return; } // wait for the resolve animation
     Object.assign(PZ, { p, G: puzzleGame(p), used: 0, afterResolve: false, state: 'play', thinking: false });
     clearSel();
     if (V.mode === 'puzzle') { V.flipped = p.side === 'b'; renderAll(); } else setMode('puzzle');
