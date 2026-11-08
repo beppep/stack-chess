@@ -2016,7 +2016,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     { id: 'h1', level: 'hard', title: 'Only one way', side: 'w', w: 'Kb1 Rg5', b: 'Kc8 c5', mate: 4.5 },
     { id: 'h2', level: 'hard', title: 'Knight watch', side: 'w', w: 'Kb1 Rg5 Nb6', b: 'Kc8 c5 e4', mate: 4 },
     { id: 'h3', level: 'hard', title: 'Crowded corner', side: 'w', w: 'Kb1 Rg5 Nb6 a6', b: 'Kc8 c5 a2 Nd2', stack: ['g5-c5', 'd2-b3'], mate: 4.5 },
-    { id: 'h4', level: 'hard', title: 'Block yourself', side: 'w', w: 'Kc8 Qf3 c2', b: 'Ka6 a7 b6', mate: 5 }
+    { id: 'h4', level: 'hard', title: 'Block yourself', side: 'w', w: 'Kc8 Qf3 c2', b: 'Ka6 a7 b6', mate: 5, depth: 2 }
   ];
   const LEVELS = [['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']];
 
@@ -2116,6 +2116,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   // The defender's choice: an escape if there is one, else the line that holds out longest. Between
   // equally good options it fights the stack: it takes a piece that has a move on the stack, with
   // another piece than the king if it can. noKing: the king stays put if anything else can move.
+  // depth (on the puzzle): how many moves ahead the defender looks, to keep deep puzzles quick.
   // center: among equal moves, pick the one that ends nearest the middle of the board.
   function defend(s, att, k, noKing, center) {
     let best = null, bestScore = -Infinity;
@@ -2184,7 +2185,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     setTimeout(async () => {
       if (G !== PZ.G) return;
       PZ.afterResolve = false;
-      const d = defend(sFrom(G), att, turnsOf(PZ.p) - PZ.used, PZ.p.noKing, PZ.p.center);
+      const d = defend(sFrom(G), att, Math.min(turnsOf(PZ.p) - PZ.used, PZ.p.depth || 99), PZ.p.noKing, PZ.p.center);
       PZ.thinking = false;
       if (!d) { finishPuzzle('failed'); return; } // the defender has no move: a draw
       const a = toAction(d);
