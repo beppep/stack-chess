@@ -147,6 +147,7 @@ html[data-layout="tall"] .board-col { order: 4; }
 html[data-layout="tall"] .boardrow { width: var(--board, 100%); max-width: 100%; margin-inline: auto; }
 html[data-layout="tall"] .stackcol > .panel { order: 5; overflow: visible; }
 html[data-layout="tall"] .stackcol > .chat { order: 6; }
+html[data-layout="tall"] .stackcol > #puzzlePanel:not([hidden]) { order: 0; display: block; }
 html[data-layout="tall"] .side { order: 8; overflow: visible; }
 html[data-layout="tall"] .stackcol > .panel:not(.chat) { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; }
 html[data-layout="tall"] .stackcol h2 { display: none; }
@@ -892,7 +893,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   // A game has started after the first move, not counting the computer's opening move when it plays White.
   const notStarted = (G, cpu) => G.acts.length <= (cpu && CPU.color === 'w' ? 1 : 0);
   let LG = freshGame(chosenTC());     // the same-screen game
-  let CG = freshGame(chosenTC());     // the game against the computer
+  let CG = freshGame(null);     // the game against the computer
   const CPU = { color: 'b', level: 'normal', thinking: false };
   let pendingNewGame = false, legalNow = [];
 
@@ -1445,7 +1446,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     const fresh = solo && notStarted(real, cpu), setup = solo && (fresh || real.phase === 'over');
     $('newBtn').hidden = !solo || fresh;
     $('flipBtn').hidden = cpu || fresh || V.mode === 'puzzle';
-    $('clockPick').hidden = !setup;
+    $('clockPick').hidden = !setup || cpu; // no clock against the computer
     $('undoBtn').hidden = V.mode === 'online' || V.mode === 'replay' || V.mode === 'puzzle';
     $('replayBtn').hidden = V.mode === 'replay' || V.mode === 'puzzle' || !real.acts.length;
     $('puzzlePanel').hidden = V.mode !== 'puzzle';
@@ -1477,6 +1478,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     const rem = tall ? 16 : Math.max(16, Math.min(26, H / 66));
     root.style.fontSize = rem + 'px';
     if (short) document.body.dataset.short = '1'; else delete document.body.dataset.short;
+    // Portrait: the puzzle overview sits above the status, so it moves into the column that holds it.
+    const pp = $('puzzlePanel'), ppHome = tall ? document.querySelector('.stackcol') : document.querySelector('.side');
+    if (pp.parentNode !== ppHome) { if (tall) ppHome.prepend(pp); else $('replayPanel').before(pp); }
     if ($('view-game').hidden) return;
     const css = getComputedStyle(document.body), room = W - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight);
     const ev = $('evalbar').hidden ? 0 : 32, row = document.querySelector('.boardrow');
@@ -1993,7 +1997,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (V.busy) return;
     CPU.color = other(b.dataset.c);
     V.flipped = b.dataset.c === 'b';
-    CG = freshGame(chosenTC()); clearSel(); renderCpuPanel(); render(); cpuTurn();
+    CG = freshGame(null); clearSel(); renderCpuPanel(); render(); cpuTurn();
   }));
   document.querySelectorAll('#cpuLevel button').forEach(b => b.addEventListener('click', () => {
     CPU.level = b.dataset.l; renderCpuPanel();
@@ -2376,7 +2380,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     try { localStorage.setItem('stackchess:tc', clockSel.value); } catch (_) {}
     // A game that hasn't started yet switches right away; otherwise it applies to the next game.
     if (notStarted(LG)) LG = freshGame(chosenTC());
-    if (notStarted(CG, true) && !CPU.thinking && !V.busy) { CG = freshGame(chosenTC()); cpuTurn(); }
     $('clockBtns').replaceChildren(clockButtons());
     render();
     renderOnline();
@@ -2443,7 +2446,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       return;
     }
     pendingNewGame = false; btn.textContent = 'New game'; btn.classList.remove('warn');
-    if (V.mode === 'cpu') { CG = freshGame(chosenTC()); clearSel(); render(); cpuTurn(); }
+    if (V.mode === 'cpu') { CG = freshGame(null); clearSel(); render(); cpuTurn(); }
     else { LG = freshGame(chosenTC()); clearSel(); render(); }
   });
   document.addEventListener('keydown', e => {
