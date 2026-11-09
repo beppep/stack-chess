@@ -80,6 +80,8 @@ a:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; border-rad
 .lead { color: var(--muted); font-size: 1.12rem; margin: 0 0 8px; max-width: 34em; }
 .howlink { color: var(--amber); font-weight: 700; text-decoration: none; }
 .howlink:hover { text-decoration: underline; }
+.contact { color: var(--muted); font-size: .9rem; margin: 18px 0 0; overflow-wrap: anywhere; }
+.contact a { color: inherit; }
 .modes { display: flex; flex-direction: column; gap: 7px; margin-top: 16px; max-width: 320px; }
 .btn.mode { display: flex; align-items: center; gap: 12px; text-align: left; padding: 8px 14px; font-size: 1rem; }
 .mode small { display: block; font-weight: 400; font-size: .82rem; opacity: .75; }
@@ -509,6 +511,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
         <a class="btn mode" id="playOnline" href="#/online"><span class="ic">♚︎</span><span>Play online<small>Join or host a room</small></span></a>
         <span class="online-count" id="onlineCount"></span>
       </div>
+      <p class="contact">Questions, bugs or ideas? <a href="mailto:bror.beppe.persson@gmail.com">bror.beppe.persson@gmail.com</a></p>
     </div>
     <div class="board-frame deco" aria-hidden="true">
       <div class="board" id="homeBoard"></div>
