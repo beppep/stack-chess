@@ -671,6 +671,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
 </div>
 
 <script src="rules.js"></script>
+<script src="bot.js"></script>
 <script>
 (() => {
   // Rules and the game model are in rules.js.
@@ -678,202 +679,6 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   const STEP = reduced ? 300 : 750;
   const wait = ms => new Promise(r => setTimeout(r, ms));
 
-  // ---------- Computer opponent: minimax with alpha-beta ----------
-  // The search works on a light copy of the game: board, the stack, and whose decision it is.
-  // An action is either putting a move on the stack or letting the stack resolve.
-  // Resolving keeps the same player to act, so the score only flips sign when the player changes.
-  const VAL = { p: 100, n: 310, b: 320, r: 500, q: 900, k: 0 };
-  const WIN = 100000;
-  const AI_LEVELS = {
-    easy: { nodes: Infinity, maxDepth: 2, noise: 90 },
-    normal: { nodes: 2000, maxDepth: 6, noise: 15 },
-    hard: { nodes: 5000, maxDepth: 10, noise: 0 }
-  };
-
-  function sFrom(G) {
-    return {
-      st: cloneState(G.st), cur: G.cur, winner: null,
-      stack: G.stack.map(e => ({ from: e.from, to: e.to, pieceId: e.pieceId, flag: e.flag, capSq: e.capSq, capId: e.capId, promoTo: e.promoTo, player: e.player }))
-    };
-  }
-  // A turn is either a response (a move on top of the stack) or, when the stack is not empty,
-  // letting it resolve and then making a move on the resulting board.
-  function sActions(s) {
-    const used = new Set(s.stack.map(e => e.pieceId));
-    const out = [];
-    for (const m of legalMoves(s.st, s.cur)) if (!used.has(m.pieceId)) out.push({ t: 'move', m });
-    if (s.stack.length) {
-      const r = sResolve(s);
-      if (r.winner) out.push({ t: 'resolve', r });
-      else for (const m of legalMoves(r.st, r.cur)) out.push({ t: 'resolve-move', r, m });
-    }
-    return out;
-  }
-  function sResolve(s) {
-    const st = cloneState(s.st);
-    let winner = null;
-    for (let i = s.stack.length - 1; i >= 0; i--) {
-      const e = s.stack[i];
-      if (!stillValid(st, e)) continue;
-      const cap = applyMove(st, e);
-      if (cap && cap.t === 'k') { winner = e.player; break; }
-    }
-    return { st, stack: [], cur: s.cur, winner };
-  }
-  function sApply(s, a) {
-    if (a.t === 'resolve') return a.r;
-    const base = a.t === 'resolve-move' ? a.r : s;
-    const m = a.m.promo ? { ...a.m, promoTo: 'q' } : a.m;
-    // Declaring doesn't touch the board, so the board is shared until something resolves.
-    return { st: base.st, stack: base.stack.concat([{ ...m, player: s.cur }]), cur: other(s.cur), winner: null };
-  }
-
-  // Score = resolve the stack, then count material, from the view of the player to act.
-  // The player to act still has their turn, so of their pieces that die in the resolution, the
-  // most valuable one that could still move (isn't already committed on the stack) counts as saved.
-  function evaluate(s) {
-    if (!s.stack.length) return threatMaterial(s.st, s.cur);
-    const t = sResolve(s);
-    const used = new Set(s.stack.map(e => e.pieceId));
-    const alive = new Set(t.st.board.filter(Boolean).map(p => p.id));
-    let saved = 0, kingSaved = false;
-    s.st.board.forEach((p, sq) => {
-      if (!p || p.c !== s.cur || alive.has(p.id) || used.has(p.id) || !pieceMoves(s.st, sq).length) return;
-      if (p.t === 'k') kingSaved = true;
-      else saved = Math.max(saved, VAL[p.t]);
-    });
-    if (t.winner === s.cur) return WIN;
-    if (t.winner) return kingSaved ? threatMaterial(t.st, s.cur) : -WIN; // a king that can step away isn't lost
-    return threatMaterial(t.st, s.cur) + saved;
-  }
-  // Material for player c, where each enemy piece attacking a piece takes 10% off its value (one 90%,
-  // two 81%, ...) unless that attacker is attacked itself,
-  // each piece attacking a king costs its owner 10, and a king attacked by two or more counts as half
-  // a lost game.
-  function threatMaterial(st, c) {
-    const hits = new Array(64).fill(0), fresh = new Array(64).fill(0), lines = [];
-    for (let sq = 0; sq < 64; sq++) {
-      const p = st.board[sq];
-      if (!p) continue;
-      for (const m of pieceMoves(st, sq)) { const q = st.board[m.to]; if (q && q.c !== p.c) { hits[m.to]++; lines.push(sq, m.to); } }
-    }
-    for (let i = 0; i < lines.length; i += 2) if (!hits[lines[i]]) fresh[lines[i + 1]]++;
-    let score = 0;
-    for (let sq = 0; sq < 64; sq++) {
-      const p = st.board[sq];
-      if (!p) continue;
-      const sign = p.c === c ? 1 : -1, doubled = hits[sq] >= 2;
-      if (p.t === 'k') { score -= sign * 10 * hits[sq]; if (doubled) score -= sign * WIN / 2; }
-      else score += sign * VAL[p.t] * 0.9 ** fresh[sq];
-    }
-    return score;
-  }
-  function material(st, c) {
-    let score = 0;
-    for (const p of st.board) if (p) score += p.c === c ? VAL[p.t] : -VAL[p.t];
-    return score;
-  }
-
-  function orderScore(s, a) {
-    if (a.t === 'resolve') return WIN;
-    const board = a.t === 'resolve-move' ? a.r.st.board : s.st.board;
-    const target = board[a.m.to], mover = board[a.m.from];
-    if (!target) return a.m.promo ? 800 : 0;
-    if (target.t === 'k') return WIN;
-    return VAL[target.t] * 10 - VAL[mover.t];
-  }
-  function ordered(s, acts) {
-    return acts.map(a => [orderScore(s, a), a]).sort((x, y) => y[0] - x[0]).map(x => x[1]);
-  }
-
-  // Stack extensions: a response that touches the fight already on the stack doesn't use up depth,
-  // so the bot reads the stack out. That is a response that captures a piece with a move on the
-  // stack, or moves a piece that a stack move is targeting. At most MAX_STACK_EXT per line.
-  const MAX_STACK_EXT = 6;
-  function stackRelated(s, a) {
-    if (a.t !== 'move' || !s.stack.length) return false;
-    const target = s.st.board[a.m.to];
-    if (target && target.c !== s.cur && s.stack.some(e => e.pieceId === target.id)) return true;
-    return s.stack.some(e => e.player !== s.cur && e.to === a.m.from);
-  }
-  function search(s, depth, alpha, beta, ply, ctx, ext = 0) {
-    if (depth === 0) return evaluate(s);
-    if (++ctx.nodes > ctx.limit) throw ctx;
-    const acts = ordered(s, sActions(s));
-    if (!acts.length) return 0;
-    let best = -Infinity;
-    for (const a of acts) {
-      const c = sApply(s, a);
-      let v;
-      const free = ext < MAX_STACK_EXT && stackRelated(s, a);
-      const nd = free ? depth : depth - 1, ne = free ? ext + 1 : ext;
-      if (c.winner) v = c.winner === s.cur ? WIN - ply - 1 : -(WIN - ply - 1);
-      else if (c.cur === s.cur) v = search(c, nd, alpha, beta, ply + 1, ctx, ne);
-      else v = -search(c, nd, -beta, -alpha, ply + 1, ctx, ne);
-      if (v > best) best = v;
-      if (v > alpha) alpha = v;
-      if (alpha >= beta) break;
-    }
-    return best;
-  }
-
-  // Iterative deepening within a node budget, so the bot plays the same on fast and slow computers;
-  // returns an action in the game's own format.
-  function chooseAction(G, level) {
-    const cfg = AI_LEVELS[level] || AI_LEVELS.normal;
-    const s = sFrom(G);
-    const ctx = { nodes: 0, limit: Infinity };
-    let acts = ordered(s, sActions(s));
-    if (!acts.length) return null;
-    let results = acts.map(a => [a, 0]);
-    for (let d = 1; d <= cfg.maxDepth; d++) {
-      ctx.limit = d <= 2 ? Infinity : cfg.nodes; // always see at least the opponent's reply
-      try {
-        const round = [];
-        let alpha = -Infinity;
-        for (const a of acts) {
-          const c = sApply(s, a);
-          let v;
-          const free = stackRelated(s, a);
-          const nd = free ? d : d - 1, ne = free ? 1 : 0;
-          if (c.winner) v = c.winner === s.cur ? WIN : -WIN;
-          // Search one below the best so far, so a move that truly ties the best gets its real score.
-          // A pruned move only gets "at most lo", so it is marked -Infinity and never picked.
-          else {
-            const lo = alpha - 1;
-            v = c.cur === s.cur ? search(c, nd, lo, Infinity, 1, ctx, ne) : -search(c, nd, -Infinity, -lo, 1, ctx, ne);
-            if (v <= lo) v = -Infinity;
-          }
-          round.push([a, v]);
-          if (v > alpha) alpha = v;
-        }
-        round.sort((x, y) => y[1] - x[1]);
-        results = round;
-        acts = round.map(x => x[0]);
-      } catch (e) {
-        if (e !== ctx) throw e;
-        break; // out of nodes: keep the last finished depth
-      }
-    }
-    chooseAction.lastScore = results[0][1];
-    // Among moves tied for best, pick one at random (avoids shuffling the same piece back and forth).
-    const ties = results.filter(r => r[1] === results[0][1]);
-    let pick = ties[Math.floor(Math.random() * ties.length)][0];
-    if (cfg.noise) {
-      let bestNoisy = -Infinity;
-      for (const [a, v] of results) {
-        const nv = v + Math.random() * cfg.noise;
-        if (nv > bestNoisy) { bestNoisy = nv; pick = a; }
-      }
-    }
-    return toAction(pick);
-  }
-  // A search action as a game action: a move, a resolve, or a resolve followed by a move.
-  function toAction(pick) {
-    if (pick.t === 'resolve') return { t: 'resolve' };
-    const move = pick.m.promo ? { t: 'move', from: pick.m.from, to: pick.m.to, p: 'q' } : { t: 'move', from: pick.m.from, to: pick.m.to };
-    return pick.t === 'resolve-move' ? { t: 'resolve', then: move } : move;
-  }
 
   // ---------- View state ----------
   const V = { mode: 'local', flipped: false, sel: null, selMoves: [], busy: false, preview: null, hist: [] };
@@ -1964,6 +1769,28 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   });
 
   // ---------- Computer opponent (play) ----------
+  // Hard thinks in a background worker (bot.js), so the page doesn't freeze while it searches.
+  // Falls back to searching here if the worker can't start or fails.
+  const BOT = { worker: null, finish: null };
+  function chooseActionAsync(G, level) {
+    if (level !== 'hard' || typeof Worker === 'undefined') return Promise.resolve(chooseAction(G, level));
+    const s = sFrom(G), acts = ordered(s, sActions(s));
+    if (!acts.length) return Promise.resolve(null);
+    if (BOT.finish) { BOT.worker.terminate(); BOT.worker = null; BOT.finish(null); }
+    try { BOT.worker ||= new Worker('bot.js'); } catch (_) { return Promise.resolve(chooseAction(G, level)); }
+    const job = Math.random();
+    return new Promise(resolve => {
+      const finish = v => { if (BOT.finish !== finish) return; BOT.finish = null; resolve(v); };
+      BOT.finish = finish;
+      BOT.worker.onerror = () => { BOT.worker.terminate(); BOT.worker = null; resolve(chooseAction(G, level)); BOT.finish = null; };
+      BOT.worker.onmessage = e => {
+        if (e.data.job !== job) return;
+        const byKey = new Map(acts.map(a => [actKey(a), a]));
+        finish(pickFrom(e.data.out.map(([k, v]) => [byKey.get(k), v]), AI_LEVELS[level]));
+      };
+      BOT.worker.postMessage({ s, level, keys: acts.map(actKey), floor: -Infinity, job });
+    });
+  }
   function cpuTurn() {
     if (V.mode !== 'cpu' || V.busy || CPU.thinking) return;
     if ((CG.phase !== 'move' && CG.phase !== 'respond') || CG.cur !== CPU.color) return;
@@ -1971,7 +1798,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     const game = CG;
     render();
     setTimeout(async () => {
-      const a = game === CG ? chooseAction(game, CPU.level) : null;
+      const a = game === CG ? await chooseActionAsync(game, CPU.level) : null;
       CPU.thinking = false;
       if (game !== CG || V.mode !== 'cpu' || !a) { render(); cpuTurn(); return; }
       const timed = withClock(CG, a);
