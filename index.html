@@ -730,18 +730,20 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   // Score = resolve the stack, then count material, from the view of the player to act.
   // The player to act still has their turn, so of their pieces that die in the resolution, the
   // most valuable one that could still move (isn't already committed on the stack) counts as saved.
+  const EV_ALIVE = new Int32Array(1024);
+  let evGen = 0;
   function evaluate(s) {
     if (!s.stack.length) return threatMaterial(s.st, s.cur);
     const t = sResolve(s);
-    const used = new Set(s.stack.map(e => e.pieceId));
-    const alive = new Set(t.st.board.filter(Boolean).map(p => p.id));
+    if (t.winner === s.cur) return WIN;
+    const gen = ++evGen;
+    for (const p of t.st.board) if (p) EV_ALIVE[p.id] = gen;
     let saved = 0, kingSaved = false;
     s.st.board.forEach((p, sq) => {
-      if (!p || p.c !== s.cur || alive.has(p.id) || used.has(p.id) || !pieceMoves(s.st, sq).length) return;
+      if (!p || p.c !== s.cur || EV_ALIVE[p.id] === gen || s.stack.some(e => e.pieceId === p.id) || !pieceMoves(s.st, sq).length) return;
       if (p.t === 'k') kingSaved = true;
       else saved = Math.max(saved, VAL[p.t]);
     });
-    if (t.winner === s.cur) return WIN;
     if (t.winner) return kingSaved ? threatMaterial(t.st, s.cur) : -WIN; // a king that can step away isn't lost
     return threatMaterial(t.st, s.cur) + saved;
   }
@@ -749,24 +751,53 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   // two 81%, ...) unless that attacker is attacked itself,
   // each piece attacking a king costs its owner 10, and a king attacked by two or more counts as half
   // a lost game.
+  // Fast attack scan (no move lists): each attacker-target pair where an enemy piece stands on the target.
+  const TM_HITS = new Int8Array(64), TM_FRESH = new Int8Array(64), TM_PAIRS = new Int16Array(1024);
   function threatMaterial(st, c) {
-    const hits = new Array(64).fill(0), fresh = new Array(64).fill(0), lines = [];
+    const b = st.board, hits = TM_HITS, fresh = TM_FRESH, pairs = TM_PAIRS;
+    hits.fill(0); fresh.fill(0);
+    let n = 0;
+    const hit = (from, to) => { hits[to]++; pairs[n++] = from; pairs[n++] = to; };
     for (let sq = 0; sq < 64; sq++) {
-      const p = st.board[sq];
+      const p = b[sq];
       if (!p) continue;
-      for (const m of pieceMoves(st, sq)) { const q = st.board[m.to]; if (q && q.c !== p.c) { hits[m.to]++; lines.push(sq, m.to); } }
+      const r = sq >> 3, f = sq & 7, col = p.c;
+      if (p.t === 'p') {
+        const r1 = r + (col === 'w' ? -1 : 1);
+        if (r1 < 0 || r1 > 7) continue;
+        if (f > 0) { const q = b[r1 * 8 + f - 1]; if (q && q.c !== col) hit(sq, r1 * 8 + f - 1); }
+        if (f < 7) { const q = b[r1 * 8 + f + 1]; if (q && q.c !== col) hit(sq, r1 * 8 + f + 1); }
+      } else if (p.t === 'n' || p.t === 'k') {
+        for (const [dr, dc] of (p.t === 'n' ? KN : KG)) {
+          const rr = r + dr, cc = f + dc;
+          if (rr < 0 || rr > 7 || cc < 0 || cc > 7) continue;
+          const q = b[rr * 8 + cc];
+          if (q && q.c !== col) hit(sq, rr * 8 + cc);
+        }
+      } else {
+        const dirs = p.t === 'r' ? ROOK : p.t === 'b' ? BISH : QUEEN_DIRS;
+        for (const [dr, dc] of dirs) {
+          let rr = r + dr, cc = f + dc;
+          while (rr >= 0 && rr < 8 && cc >= 0 && cc < 8) {
+            const q = b[rr * 8 + cc];
+            if (q) { if (q.c !== col) hit(sq, rr * 8 + cc); break; }
+            rr += dr; cc += dc;
+          }
+        }
+      }
     }
-    for (let i = 0; i < lines.length; i += 2) if (!hits[lines[i]]) fresh[lines[i + 1]]++;
+    for (let i = 0; i < n; i += 2) if (!hits[pairs[i]]) fresh[pairs[i + 1]]++;
     let score = 0;
     for (let sq = 0; sq < 64; sq++) {
-      const p = st.board[sq];
+      const p = b[sq];
       if (!p) continue;
-      const sign = p.c === c ? 1 : -1, doubled = hits[sq] >= 2;
-      if (p.t === 'k') { score -= sign * 10 * hits[sq]; if (doubled) score -= sign * WIN / 2; }
+      const sign = p.c === c ? 1 : -1;
+      if (p.t === 'k') { score -= sign * 10 * hits[sq]; if (hits[sq] >= 2) score -= sign * WIN / 2; }
       else score += sign * VAL[p.t] * 0.9 ** fresh[sq];
     }
     return score;
   }
+  const QUEEN_DIRS = ROOK.concat(BISH);
   function material(st, c) {
     let score = 0;
     for (const p of st.board) if (p) score += p.c === c ? VAL[p.t] : -VAL[p.t];
@@ -800,6 +831,9 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (++ctx.nodes > ctx.limit) throw ctx;
     const acts = ordered(s, sActions(s));
     if (!acts.length) return 0;
+    // Killer move: the move that cut off a sibling line at this depth is tried first.
+    const kill = ctx.killers && ctx.killers[ply];
+    if (kill !== undefined) { const i = acts.findIndex(a => actKey(a) === kill); if (i > 0) acts.unshift(acts.splice(i, 1)[0]); }
     let best = -Infinity;
     for (const a of acts) {
       const c = sApply(s, a);
@@ -811,10 +845,11 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       else v = -search(c, nd, -beta, -alpha, ply + 1, ctx, ne);
       if (v > best) best = v;
       if (v > alpha) alpha = v;
-      if (alpha >= beta) break;
+      if (alpha >= beta) { (ctx.killers ||= [])[ply] = actKey(a); break; }
     }
     return best;
   }
+  const actKey = a => a.t === 'resolve' ? -1 : (a.t === 'move' ? 0 : 4096) + a.m.from * 64 + a.m.to;
 
   // Iterative deepening within a node budget, so the bot plays the same on fast and slow computers;
   // returns an action in the game's own format.
