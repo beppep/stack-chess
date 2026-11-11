@@ -686,7 +686,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   const AI_LEVELS = {
     easy: { nodes: Infinity, maxDepth: 2, noise: 90 },
     normal: { nodes: 2000, maxDepth: 6, noise: 15 },
-    hard: { nodes: 5000, maxDepth: 10, noise: 0 }
+    hard: { nodes: 5000, maxDepth: 10, noise: 0, minDepth: 3 } // always finishes 3 deep
   };
 
   function sFrom(G) {
@@ -826,7 +826,7 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
     if (!acts.length) return null;
     let results = acts.map(a => [a, 0]);
     for (let d = 1; d <= cfg.maxDepth; d++) {
-      ctx.limit = d <= 2 ? Infinity : cfg.nodes; // always see at least the opponent's reply
+      ctx.limit = d <= (cfg.minDepth || 2) ? Infinity : cfg.nodes; // always see at least the opponent's reply
       try {
         const round = [];
         let alpha = -Infinity;
