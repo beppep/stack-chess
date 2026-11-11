@@ -1966,7 +1966,8 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
       const board = (d.t === 'resolve-move' ? d.r.st : s.st).board, moved = d.m && board[d.m.from];
       const intoCheck = moved && moved.t === 'k' && attacked(board, d.m.to, att); // a king doesn't step into an attack for nothing
       const score = need * 3 + (fights ? (s.st.board[d.m.from].t === 'k' ? 1 : 2) : 0) - (noKing && moved && moved.t === 'k' ? 100 : 0) - (intoCheck ? 0.5 : 0)
-        + (prefer && d.m && prefer.includes(StackRules.sqName(d.m.from) + '-' + StackRules.sqName(d.m.to)) ? 1 : 0)
+        - (moved && moved.t === 'k' ? 0.75 : 0) // the king only moves when it has to
+        + (prefer && d.m && prefer.includes(StackRules.sqName(d.m.from) + '-' + StackRules.sqName(d.m.to)) ? 2 : 0)
         - (center && d.m ? 0.05 * (Math.abs(d.m.to % 8 - 3.5) + Math.abs((d.m.to >> 3) - 3.5)) : 0); // center: head for the middle
       if (score > bestScore) { best = d; bestScore = score; }
     }
