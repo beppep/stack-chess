@@ -167,9 +167,26 @@ function posKey(s) {
   }
   return h1 * 2097152 + (h2 & 2097151);
 }
+// End of the search: before the score counts, the side to act may still make its free replies
+// (capture a piece whose move is on the stack, or move a piece a stack move aims at). Letting the
+// stack resolve as it is (the score) is always one of the options.
+function quiet(s, alpha, beta, ply, ext) {
+  let best = evaluate(s);
+  if (best >= beta || ext >= MAX_STACK_EXT || !s.stack.length) return best;
+  if (best > alpha) alpha = best;
+  for (const a of sActions(s)) {
+    if (!stackRelated(s, a)) continue;
+    const c = sApply(s, a);
+    const v = c.winner ? (c.winner === s.cur ? WIN - ply - 1 : -(WIN - ply - 1)) : -quiet(c, -beta, -alpha, ply + 1, ext + 1);
+    if (v > best) best = v;
+    if (v > alpha) alpha = v;
+    if (alpha >= beta) break;
+  }
+  return best;
+}
 let LMR = true, LMR_AFTER = 3;
 function search(s, depth, alpha, beta, ply, ctx, ext = 0) {
-  if (depth === 0) return evaluate(s);
+  if (depth === 0) return quiet(s, alpha, beta, ply, ext);
   if (++ctx.nodes > ctx.limit) throw ctx;
   const key = posKey(s), hit = TT.get(key);
   if (hit && hit.depth === depth && hit.ext === ext && hit.ply === ply) {
