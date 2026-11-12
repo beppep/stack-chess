@@ -110,4 +110,9 @@ int sc_nn_features(const Pos *p, int c, int *out);   // active input indices, re
 void sc_nn_set(const float *weights);                 // copies NN_FLOATS weights in
 double sc_nn_eval(const Pos *p, int c);
 extern int sc_nn_residual;                           // 1: score = threatMaterial + network (a learned correction)
+// How evaluate counts a dying piece of the side to act as "saved" (it can dodge):
+// 0 always (bot.js), 1 only if no second enemy attacker without a move on the stack, 2 never.
+extern int sc_saved_rule;
+extern int sc_king_rule;     // see sc_threat_material
+extern double sc_frozen;
 #endif

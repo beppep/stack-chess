@@ -5,10 +5,13 @@
 //   sc bench D [file] [net.bin] [residual]   times the bot to depth D on positions (default: engine/test/positions.txt)
 //   sc selfplay D [seed]   the bot plays itself at depth D, printing every action
 //   sc gen D games seed out.bin [noise] [net.bin] [residual]   self-play training data (appends to out.bin), by the classic or a network bot
-//   sc match D pairs seed net.bin [netD] [residual] [ms]  network bot vs classic bot, pairs of games with the same opening
-//                                      (ms > 0: both think ms per move, at least depth 2, instead of fixed depths)
+//   sc nnmatch D pairs seed net.bin [netD] [residual] [ms] [netbot] [classicbot]  network bot vs classic bot, pairs of
+//                                      games with the same opening (ms > 0: both think ms per move, at least depth 2,
+//                                      instead of fixed depths; netbot/classicbot: scoring settings as in "s1k2f0.6",
+//                                      default the engine's current ones)
 //   sc tm data.bin out.f32             threatMaterial of each record (base for a residual network)
 //   sc nneval net.bin data.bin N       network output for the first N records
+//   sc match P0 P1 NODES MAXD MIND RULE_A RULE_B   bot A vs bot B on game pairs P0..P1-1 (see cmd_match)
 // Actions are written m<from>-<to>[qrbn] (squares 0..63, a8 = 0) or r (let the stack resolve).
 #include <stdio.h>
 #include <stdlib.h>
@@ -310,9 +313,25 @@ static void cmd_tm(const char *datafile, const char *outfile) {
   fclose(f); fclose(o);
 }
 
-// Network bot against the classic bot, same depth. Games come in pairs with the same random opening,
-// the network playing White in one and Black in the other.
-static void cmd_match(int depth, int pairs, unsigned seed, const char *netfile, int net_depth) {
+// A bot's settings: "s<saved rule>k<king rule>f<frozen factor>", any part may be left out (a plain number = saved rule).
+typedef struct { int saved, king; double frozen; } BotCfg;
+static BotCfg parse_bot(const char *t) {
+  BotCfg b = {0, 0, 0.9};
+  if (*t >= '0' && *t <= '9') { b.saved = atoi(t); return b; }
+  while (*t) {
+    char k = *t++;
+    double v = atof(t);
+    while (*t && !(*t >= 'a' && *t <= 'z')) t++;
+    if (k == 's') b.saved = (int)v; else if (k == 'k') b.king = (int)v; else if (k == 'f') b.frozen = v;
+  }
+  return b;
+}
+static void use_bot(BotCfg b) { sc_saved_rule = b.saved; sc_king_rule = b.king; sc_frozen = b.frozen; }
+
+// Network bot against the classic bot. Games come in pairs with the same random opening,
+// the network playing White in one and Black in the other. Each side has its own scoring settings
+// (see parse_bot); the network adds its correction on top of threatMaterial with the network side's settings.
+static void cmd_nnmatch(int depth, int pairs, unsigned seed, const char *netfile, int net_depth, BotCfg cfg_nn, BotCfg cfg_classic) {
   sc_nn_set(load_net(netfile));
   rng_state ^= (uint64_t)seed * 0x9E3779B97F4A7C15ull; rnd();
   int w = 0, d = 0, l = 0;
@@ -327,6 +346,7 @@ static void cmd_match(int depth, int pairs, unsigned seed, const char *netfile, 
       while (g.phase != PH_OVER && actions < 300) {
         int nn = g.cur == nn_color;
         sc_board_eval = nn ? sc_nn_eval : sc_threat_material;
+        use_bot(nn ? cfg_nn : cfg_classic);
         double score, t = now_ms();
         Act a = bot_choice(&g, nn ? net_depth : depth, 0, &score);
         ms[nn] += now_ms() - t; moves[nn]++;
@@ -340,6 +360,58 @@ static void cmd_match(int depth, int pairs, unsigned seed, const char *netfile, 
     printf("pair %d: network %d wins, %d draws, %d losses = %.1f%% (Elo %+.0f); ms/move network %.1f, classic %.1f\n",
            pi + 1, w, d, l, 100 * p, elo, ms[1] / (moves[1] ? moves[1] : 1), ms[0] / (moves[0] ? moves[0] : 1));
     fflush(stdout);
+  }
+}
+
+// Bot vs bot. Each pair is a random 4-action opening played twice, colours swapped. The bots differ only in
+// sc_saved_rule (RULE_A, RULE_B). Prints one line per finished game, as soon as it ends:
+//   game <pair> <A colour w|b> <winner w|b|-> <bot actions> <A starts> <A lost> <B starts> <B lost>
+// "starts": captures a side put on an empty stack; "lost": of those, the capturing piece was taken and the
+// target survived once the stack resolved (starting a fight and losing it).
+static unsigned mrng_state;
+static unsigned rng(void) { mrng_state = mrng_state * 1103515245u + 12345u; return mrng_state >> 8; }
+static int alive_id(const Game *g, int id) { for (int i = 0; i < 64; i++) if (g->st.board[i] && g->st.id[i] == id) return 1; return 0; }
+
+static void cmd_match(int argc, char **argv) {
+  if (argc < 9) { fprintf(stderr, "usage: sc match P0 P1 NODES MAXD MIND RULE_A RULE_B\n"); exit(1); }
+  int p0 = atoi(argv[2]), p1 = atoi(argv[3]);
+  SearchCfg cfg = {atoi(argv[5]), atoi(argv[6]), atof(argv[4]), 0};
+  BotCfg rule[2] = {parse_bot(argv[7]), parse_bot(argv[8])};
+  static RootResult res[MAX_ACTS];
+  Move mv[MAX_MOVES];
+  for (int pair = p0; pair < p1; pair++) {
+    for (int aWhite = 1; aWhite >= 0; aWhite--) {
+      Game g; sc_new_game(&g);
+      mrng_state = 1000u + (unsigned)pair * 7919u;
+      for (int i = 0; i < 4 && g.phase != PH_OVER; i++) {
+        int n = sc_available_moves(&g, mv), k = (int)(rng() % (unsigned)(n + (g.n ? 1 : 0)));
+        if (k == n) sc_game_resolve(&g); else sc_game_move(&g, mv[k].from, mv[k].to, QUEEN);
+      }
+      int starts[2] = {0, 0}, lost[2] = {0, 0}, plies = 0;
+      int pend = 0, pend_side = 0, pend_x = 0, pend_y = 0;
+      while (g.phase != PH_OVER && plies < 400) {
+        int side = g.cur, bot = (side == WHITE) == aWhite ? 0 : 1;  // 0 = A, 1 = B
+        use_bot(rule[bot]);
+        S st; sc_s_from_game(&g, &st);
+        double nodes;
+        if (!sc_root_search(&st, &cfg, res, &nodes)) break;
+        Act a = res[0].a;
+        if (a.t == A_RESOLVE || a.t == A_RESOLVE_MOVE) sc_game_resolve(&g);
+        if (!pend || g.n == 0) {
+          if (pend && g.n == 0) { starts[pend_side]++; if (!alive_id(&g, pend_x) && alive_id(&g, pend_y)) lost[pend_side]++; pend = 0; }
+        }
+        if (a.t != A_RESOLVE && g.phase != PH_OVER) {
+          int x = g.st.board[a.m.from], y = g.st.board[a.m.to];
+          if (!g.n && !pend && x && y && PCOLOR(y) != PCOLOR(x)) { pend = 1; pend_side = bot; pend_x = g.st.id[a.m.from]; pend_y = g.st.id[a.m.to]; }
+          sc_game_move(&g, a.m.from, a.m.to, a.m.promo ? QUEEN : 0);
+        }
+        if (pend && g.n == 0) { starts[pend_side]++; if (!alive_id(&g, pend_x) && alive_id(&g, pend_y)) lost[pend_side]++; pend = 0; }
+        plies++;
+      }
+      char aCol = aWhite ? 'w' : 'b', win = g.result == R_WHITE ? 'w' : g.result == R_BLACK ? 'b' : '-';
+      printf("game %d %c %c %d %d %d %d %d\n", pair, aCol, win, plies, starts[0], lost[0], starts[1], lost[1]);
+      fflush(stdout);
+    }
   }
 }
 
@@ -363,8 +435,15 @@ int main(int argc, char **argv) {
     cmd_gen(d, atoi(argv[3]), (unsigned)atoi(argv[4]), argv[5], argc > 6 ? atof(argv[6]) : 30);
   }
   else if (!strcmp(cmd, "tm") && argc > 3) cmd_tm(argv[2], argv[3]);
-  else if (!strcmp(cmd, "match") && argc > 5) { sc_nn_residual = argc > 7 && atoi(argv[7]); move_ms = argc > 8 ? atof(argv[8]) : 0; cmd_match(d, atoi(argv[3]), (unsigned)atoi(argv[4]), argv[5], argc > 6 ? atoi(argv[6]) : d); }
+  else if (!strcmp(cmd, "nnmatch") && argc > 5) {
+    BotCfg cur = {sc_saved_rule, sc_king_rule, sc_frozen};
+    sc_nn_residual = argc > 7 && atoi(argv[7]); move_ms = argc > 8 ? atof(argv[8]) : 0;
+    cmd_nnmatch(d, atoi(argv[3]), (unsigned)atoi(argv[4]), argv[5], argc > 6 ? atoi(argv[6]) : d,
+                argc > 9 ? parse_bot(argv[9]) : cur, argc > 10 ? parse_bot(argv[10]) : cur);
+  }
   else if (!strcmp(cmd, "nneval") && argc > 4) cmd_nneval(argv[2], argv[3], atoi(argv[4]));
+  else if (!strcmp(cmd, "bench")) cmd_bench(d, argc > 3 ? argv[3] : "engine/test/positions.txt");
+  else if (!strcmp(cmd, "match")) cmd_match(argc, argv);
   else if (!strcmp(cmd, "selfplay")) cmd_selfplay(d, argc > 3 ? (unsigned)atoi(argv[3]) : (unsigned)time(0));
   else { fprintf(stderr, "unknown command %s\n", cmd); return 1; }
   return 0;

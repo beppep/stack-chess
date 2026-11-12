@@ -104,6 +104,8 @@ int sc_ordered_actions(const S *s, Act *out, S *resolved) {
 }
 
 // ---------- Evaluation ----------
+int sc_king_rule = 2;     // two attackers on a king: 0 any two = half a lost game, 1 only two not attacked themselves, 2 only -300
+double sc_frozen = 0.6;   // king 2 + frozen 0.6 won 199-92 against king 0 + frozen 0.9 over 300 games (2026-11-12)   // value kept by a piece with exactly one attacker that is not attacked itself
 double sc_threat_material(const Pos *p, int c) {
   const uint8_t *b = p->board;
   int hits[64], fresh[64], pairs[1024], n = 0;
@@ -147,14 +149,36 @@ double sc_threat_material(const Pos *p, int c) {
     int sign = PCOLOR(pc) == c ? 1 : -1;
     if (PTYPE(pc) == KING) {
       score -= sign * 10 * hits[sq];
-      if (hits[sq] >= 2) score -= sign * WIN / 2;
-    } else score += (double)(sign * VAL[PTYPE(pc)]) * P9[fresh[sq]];
+      if ((sc_king_rule == 1 ? fresh[sq] : hits[sq]) >= 2) score -= sign * (sc_king_rule == 2 ? 300 : WIN / 2);
+    } else score += (double)(sign * VAL[PTYPE(pc)]) * (fresh[sq] == 1 ? sc_frozen : P9[fresh[sq]]);
   }
   return score;
 }
 
 // How a board with no stack is scored for the side to act: threatMaterial (bot.js) unless a network is loaded.
 double (*sc_board_eval)(const Pos *p, int c) = sc_threat_material;
+int sc_saved_rule = 1;  // 1 won 68% against 0 over 300 games (2026-11-12)
+
+// Is the piece of colour c on sq attacked by an enemy piece that has no move on the stack yet?
+static int free_attacker(const S *s, int sq, int c) {
+  const Pos *p = &s->st;
+  int r = sq >> 3, f = sq & 7, pr = c == WHITE ? r - 1 : r + 1;
+#define FREE(q, i) ((q) && PCOLOR(q) != c && !on_stack(s, p->id[i]))
+  if (pr >= 0 && pr < 8) for (int df = -1; df <= 1; df += 2) { int ff = f + df; if (ff >= 0 && ff < 8) { int i = pr * 8 + ff, q = p->board[i]; if (PTYPE(q) == PAWN && FREE(q, i)) return 1; } }
+  for (int k = 0; k < 8; k++) { int rr = r + KN[k][0], ff = f + KN[k][1]; if (rr >= 0 && rr < 8 && ff >= 0 && ff < 8) { int i = rr * 8 + ff, q = p->board[i]; if (PTYPE(q) == KNIGHT && FREE(q, i)) return 1; } }
+  for (int k = 0; k < 8; k++) { int rr = r + KG[k][0], ff = f + KG[k][1]; if (rr >= 0 && rr < 8 && ff >= 0 && ff < 8) { int i = rr * 8 + ff, q = p->board[i]; if (PTYPE(q) == KING && FREE(q, i)) return 1; } }
+  for (int k = 0; k < 8; k++) {
+    for (int rr = r + QD[k][0], ff = f + QD[k][1]; rr >= 0 && rr < 8 && ff >= 0 && ff < 8; rr += QD[k][0], ff += QD[k][1]) {
+      int i = rr * 8 + ff, q = p->board[i];
+      if (!q) continue;
+      int t = PTYPE(q);
+      if ((t == QUEEN || (k < 4 ? t == ROOK : t == BISHOP)) && FREE(q, i)) return 1;
+      break;
+    }
+  }
+#undef FREE
+  return 0;
+}
 
 double sc_evaluate(const S *s) {
   if (!s->n) return sc_board_eval(&s->st, s->cur);
@@ -170,6 +194,7 @@ double sc_evaluate(const S *s) {
     if (!pc || PCOLOR(pc) != s->cur) continue;
     int id = s->st.id[sq];
     if (alive[id & 31] || on_stack(s, id) || !sc_piece_moves(&s->st, sq, tmp)) continue;
+    if (sc_saved_rule == 2 || (sc_saved_rule == 1 && free_attacker(s, sq, s->cur))) continue;
     if (PTYPE(pc) == KING) king_saved = 1;
     else if (VAL[PTYPE(pc)] > saved) saved = VAL[PTYPE(pc)];
   }

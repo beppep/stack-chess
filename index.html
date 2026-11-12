@@ -1773,26 +1773,31 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   });
 
   // ---------- Computer opponent (play) ----------
-  // Hard thinks in a background worker (bot.js), so the page doesn't freeze while it searches.
-  // Falls back to searching here if the worker can't start or fails.
+  // Hard is the C engine (engine/sc.wasm) in a background worker: the same search as bot.js, about
+  // 12 times faster, so it searches about 6 times as many positions in the same time. If the engine
+  // fails to load or answer, the JavaScript bot plays the move instead.
+  const ENGINE_HARD = { maxDepth: 30, minDepth: 3, nodes: 30000 };
   const BOT = { worker: null, finish: null };
   function chooseActionAsync(G, level) {
-    if (level !== 'hard' || typeof Worker === 'undefined') return Promise.resolve(chooseAction(G, level));
+    if (level !== 'hard' || typeof Worker === 'undefined' || typeof WebAssembly === 'undefined') return Promise.resolve(chooseAction(G, level));
     const s = sFrom(G), acts = ordered(s, sActions(s));
     if (!acts.length) return Promise.resolve(null);
     if (BOT.finish) { BOT.worker.terminate(); BOT.worker = null; BOT.finish(null); }
-    try { BOT.worker ||= new Worker('bot.js'); } catch (_) { return Promise.resolve(chooseAction(G, level)); }
+    try { BOT.worker ||= new Worker('engine/worker.js'); } catch (_) { return Promise.resolve(chooseAction(G, level)); }
     const job = Math.random();
     return new Promise(resolve => {
       const finish = v => { if (BOT.finish !== finish) return; BOT.finish = null; resolve(v); };
       BOT.finish = finish;
-      BOT.worker.onerror = () => { BOT.worker.terminate(); BOT.worker = null; resolve(chooseAction(G, level)); BOT.finish = null; };
+      const fallback = () => { BOT.worker.terminate(); BOT.worker = null; const v = chooseAction(G, level); finish(v); };
+      BOT.worker.onerror = fallback;
       BOT.worker.onmessage = e => {
         if (e.data.job !== job) return;
-        const byKey = new Map(acts.map(a => [actKey(a), a]));
-        finish(pickFrom(e.data.out.map(([k, v]) => [byKey.get(k), v]), AI_LEVELS[level]));
+        const pick = !e.data.error && acts.find(a => actKey(a) === e.data.key);
+        if (!pick) { console.warn('engine:', e.data.error || 'unknown action ' + e.data.key); fallback(); return; }
+        chooseAction.lastScore = e.data.score;
+        finish(toAction(pick));
       };
-      BOT.worker.postMessage({ s, level, keys: acts.map(actKey), floor: -Infinity, job });
+      BOT.worker.postMessage({ acts: G.acts.filter(x => x.t === 'move' || x.t === 'resolve').map(x => ({ t: x.t, from: x.from, to: x.to, p: x.p })), ...ENGINE_HARD, job });
     });
   }
   function cpuTurn() {

@@ -64,11 +64,27 @@ function evaluate(s) {
   let saved = 0, kingSaved = false;
   s.st.board.forEach((p, sq) => {
     if (!p || p.c !== s.cur || EV_ALIVE[p.id] === gen || s.stack.some(e => e.pieceId === p.id) || !pieceMoves(s.st, sq).length) return;
+    if (freeAttacker(s.st.board, sq, p.c, s.stack)) return; // a second attacker takes it on top after it dodges
     if (p.t === 'k') kingSaved = true;
     else saved = Math.max(saved, VAL[p.t]);
   });
   if (t.winner) return kingSaved ? threatMaterial(t.st, s.cur) : -WIN; // a king that can step away isn't lost
   return threatMaterial(t.st, s.cur) + saved;
+}
+// Is the piece of colour c on sq attacked by an enemy piece that has no move on the stack yet?
+function freeAttacker(b, sq, c, stack) {
+  const r = sq >> 3, f = sq & 7, free = q => q && q.c !== c && !stack.some(e => e.pieceId === q.id);
+  const pr = c === 'w' ? r - 1 : r + 1;
+  if (pr >= 0 && pr < 8) for (const df of [-1, 1]) { const ff = f + df; if (ff >= 0 && ff < 8) { const q = b[pr * 8 + ff]; if (q && q.t === 'p' && free(q)) return true; } }
+  for (const [dr, df] of KN) { const rr = r + dr, ff = f + df; if (rr >= 0 && rr < 8 && ff >= 0 && ff < 8) { const q = b[rr * 8 + ff]; if (q && q.t === 'n' && free(q)) return true; } }
+  for (const [dr, df] of KG) { const rr = r + dr, ff = f + df; if (rr >= 0 && rr < 8 && ff >= 0 && ff < 8) { const q = b[rr * 8 + ff]; if (q && q.t === 'k' && free(q)) return true; } }
+  for (const [dirs, kinds] of [[ROOK, 'rq'], [BISH, 'bq']]) for (const [dr, df] of dirs) {
+    for (let rr = r + dr, ff = f + df; rr >= 0 && rr < 8 && ff >= 0 && ff < 8; rr += dr, ff += df) {
+      const q = b[rr * 8 + ff];
+      if (q) { if (kinds.includes(q.t) && free(q)) return true; break; }
+    }
+  }
+  return false;
 }
 // Material for player c, where each enemy piece attacking a piece takes 10% off its value (one 90%,
 // two 81%, ...) unless that attacker is attacked itself,
@@ -115,8 +131,10 @@ function threatMaterial(st, c) {
     const p = b[sq];
     if (!p) continue;
     const sign = p.c === c ? 1 : -1;
-    if (p.t === 'k') { score -= sign * 10 * hits[sq]; if (hits[sq] >= 2) score -= sign * WIN / 2; }
-    else score += sign * VAL[p.t] * 0.9 ** fresh[sq];
+    // A king attacked twice costs 300. A piece with one attacker that isn't attacked itself is frozen
+    // (moving it gets it taken on top), so it keeps 60%; with more such attackers, 0.9 per attacker.
+    if (p.t === 'k') { score -= sign * 10 * hits[sq]; if (hits[sq] >= 2) score -= sign * 300; }
+    else score += sign * VAL[p.t] * (fresh[sq] === 1 ? 0.6 : 0.9 ** fresh[sq]);
   }
   return score;
 }
