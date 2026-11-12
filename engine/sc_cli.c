@@ -313,20 +313,20 @@ static void cmd_tm(const char *datafile, const char *outfile) {
   fclose(f); fclose(o);
 }
 
-// A bot's settings: "s<saved rule>k<king rule>f<frozen factor>", any part may be left out (a plain number = saved rule).
-typedef struct { int saved, king; double frozen; } BotCfg;
+// A bot's settings: "s<saved rule>k<king rule>f<frozen factor>p<principal variation search 0/1/2>e<free stack replies>", any part may be left out (a plain number = saved rule).
+typedef struct { int saved, king; double frozen; int pvs, ext; } BotCfg;
 static BotCfg parse_bot(const char *t) {
-  BotCfg b = {0, 0, 0.9};
+  BotCfg b = {0, 0, 0.9, 0, 6};
   if (*t >= '0' && *t <= '9') { b.saved = atoi(t); return b; }
   while (*t) {
     char k = *t++;
     double v = atof(t);
     while (*t && !(*t >= 'a' && *t <= 'z')) t++;
-    if (k == 's') b.saved = (int)v; else if (k == 'k') b.king = (int)v; else if (k == 'f') b.frozen = v;
+    if (k == 's') b.saved = (int)v; else if (k == 'k') b.king = (int)v; else if (k == 'f') b.frozen = v; else if (k == 'p') b.pvs = (int)v; else if (k == 'e') b.ext = (int)v;
   }
   return b;
 }
-static void use_bot(BotCfg b) { sc_saved_rule = b.saved; sc_king_rule = b.king; sc_frozen = b.frozen; }
+static void use_bot(BotCfg b) { sc_saved_rule = b.saved; sc_king_rule = b.king; sc_frozen = b.frozen; sc_pvs = b.pvs; sc_max_ext = b.ext; }
 
 // Network bot against the classic bot. Games come in pairs with the same random opening,
 // the network playing White in one and Black in the other. Each side has its own scoring settings
@@ -422,6 +422,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   const char *cmd = argv[1];
+  if (getenv("SC_PVS")) sc_pvs = atoi(getenv("SC_PVS"));
   int d = argc > 2 ? atoi(argv[2]) : 3;
   if (!strcmp(cmd, "replay")) cmd_replay();
   else if (!strcmp(cmd, "search")) cmd_search(d);
@@ -436,7 +437,7 @@ int main(int argc, char **argv) {
   }
   else if (!strcmp(cmd, "tm") && argc > 3) cmd_tm(argv[2], argv[3]);
   else if (!strcmp(cmd, "nnmatch") && argc > 5) {
-    BotCfg cur = {sc_saved_rule, sc_king_rule, sc_frozen};
+    BotCfg cur = {sc_saved_rule, sc_king_rule, sc_frozen, sc_pvs, sc_max_ext};
     sc_nn_residual = argc > 7 && atoi(argv[7]); move_ms = argc > 8 ? atof(argv[8]) : 0;
     cmd_nnmatch(d, atoi(argv[3]), (unsigned)atoi(argv[4]), argv[5], argc > 6 ? atoi(argv[6]) : d,
                 argc > 9 ? parse_bot(argv[9]) : cur, argc > 10 ? parse_bot(argv[10]) : cur);

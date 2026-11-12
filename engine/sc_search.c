@@ -204,8 +204,11 @@ double sc_evaluate(const S *s) {
 
 // ---------- Search ----------
 #define MAX_STACK_EXT 6
+int sc_max_ext = MAX_STACK_EXT;  // 3 scored 44%, 1 about 39% against 6 at equal nodes (2026-11-13); free stack replies inside the search (quiet() at the end keeps MAX_STACK_EXT)
 #define LMR_AFTER 3
 int sc_lmr = 1;
+int sc_pvs = 0;  // 2 (also at the root) scored 48.5% against 0 over 100 games at equal nodes (2026-11-13)
+#define PVS_EPS 1e-6
 
 static int stack_related(const S *s, const Act *a) {
   if (a->t != A_MOVE || !s->n) return 0;
@@ -342,16 +345,24 @@ static double search(const S *s, int depth, double alpha, double beta, int ply, 
     const Act *a = &acts[i];
     sc_s_apply(s, a, &r, &c);
     double v;
-    int fr = ext < MAX_STACK_EXT && stack_related(s, a);
+    int fr = ext < sc_max_ext && stack_related(s, a);
     int nd = fr ? depth : depth - 1, ne = fr ? ext + 1 : ext;
     int reduce = sc_lmr && nd >= 1 && i >= LMR_AFTER && !fr && sc_order_score(s, a, &r) == 0;
     if (c.winner >= 0) v = c.winner == s->cur ? WIN - ply - 1 : -(WIN - ply - 1);
     else {
       int same = c.cur == s->cur;
       int d = reduce ? nd - 1 : nd;
-      v = same ? search(&c, d, alpha, beta, ply + 1, ctx, ne) : -search(&c, d, -beta, -alpha, ply + 1, ctx, ne);
+      // Principal variation search: after the first action, only ask "is this better than alpha?"
+      // with a zero-width window, and search again with the full window when it is.
+      double hi = sc_pvs && i > 0 ? alpha + PVS_EPS : beta;
+      if (hi > beta) hi = beta;
+      v = same ? search(&c, d, alpha, hi, ply + 1, ctx, ne) : -search(&c, d, -hi, -alpha, ply + 1, ctx, ne);
       if (ctx->abort) return 0;
       if (reduce && v > alpha) {
+        v = same ? search(&c, nd, alpha, hi, ply + 1, ctx, ne) : -search(&c, nd, -hi, -alpha, ply + 1, ctx, ne);
+        if (ctx->abort) return 0;
+      }
+      if (hi < beta && v > alpha) {
         v = same ? search(&c, nd, alpha, beta, ply + 1, ctx, ne) : -search(&c, nd, -beta, -alpha, ply + 1, ctx, ne);
         if (ctx->abort) return 0;
       }
@@ -390,9 +401,20 @@ int sc_root_search(const S *s, const SearchCfg *cfg, RootResult *out, double *no
       if (c.winner >= 0) v = c.winner == s->cur ? WIN : -WIN;
       else {
         double lo = alpha - 1;
+        if (sc_pvs >= 2 && i > 0) {
+          // Only the best action matters: first ask whether this one beats it at all.
+          v = c.cur == s->cur ? search(&c, nd, alpha, alpha + PVS_EPS, 1, &ctx, ne) : -search(&c, nd, -alpha - PVS_EPS, -alpha, 1, &ctx, ne);
+          if (ctx.abort) break;
+          if (v <= alpha) v = -INF;
+          else {
+            v = c.cur == s->cur ? search(&c, nd, alpha, INF, 1, &ctx, ne) : -search(&c, nd, -INF, -alpha, 1, &ctx, ne);
+            if (ctx.abort) break;
+          }
+        } else {
         v = c.cur == s->cur ? search(&c, nd, lo, INF, 1, &ctx, ne) : -search(&c, nd, -INF, -lo, 1, &ctx, ne);
         if (ctx.abort) break;
         if (v <= lo) v = -INF;
+        }
       }
       round[i].a = *a; round[i].v = v;
       if (v > alpha) alpha = v;
