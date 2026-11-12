@@ -4,6 +4,7 @@
 //   sc perft D             counts game-action sequences of length 1..D from the start
 //   sc bench D [file]      times the bot to depth D on positions (default: engine/test/positions.txt)
 //   sc selfplay D [seed]   the bot plays itself at depth D, printing every action
+//   sc match P0 P1 NODES MAXD MIND RULE_A RULE_B   bot A vs bot B on game pairs P0..P1-1 (see cmd_match)
 // Actions are written m<from>-<to>[qrbn] (squares 0..63, a8 = 0) or r (let the stack resolve).
 #include <stdio.h>
 #include <stdlib.h>
@@ -191,6 +192,58 @@ static void cmd_selfplay(int depth, unsigned seed) {
   printf("result: %s\n", g.result == R_WHITE ? "White wins" : g.result == R_BLACK ? "Black wins" : g.result == R_DRAW ? "draw" : "unfinished");
 }
 
+// Bot vs bot. Each pair is a random 4-action opening played twice, colours swapped. The bots differ only in
+// sc_saved_rule (RULE_A, RULE_B). Prints one line per finished game, as soon as it ends:
+//   game <pair> <A colour w|b> <winner w|b|-> <bot actions> <A starts> <A lost> <B starts> <B lost>
+// "starts": captures a side put on an empty stack; "lost": of those, the capturing piece was taken and the
+// target survived once the stack resolved (starting a fight and losing it).
+static unsigned rng_state;
+static unsigned rng(void) { rng_state = rng_state * 1103515245u + 12345u; return rng_state >> 8; }
+static int alive_id(const Game *g, int id) { for (int i = 0; i < 64; i++) if (g->st.board[i] && g->st.id[i] == id) return 1; return 0; }
+
+static void cmd_match(int argc, char **argv) {
+  if (argc < 9) { fprintf(stderr, "usage: sc match P0 P1 NODES MAXD MIND RULE_A RULE_B\n"); exit(1); }
+  int p0 = atoi(argv[2]), p1 = atoi(argv[3]);
+  SearchCfg cfg = {atoi(argv[5]), atoi(argv[6]), atof(argv[4])};
+  int rule[2] = {atoi(argv[7]), atoi(argv[8])};
+  static RootResult res[MAX_ACTS];
+  Move mv[MAX_MOVES];
+  for (int pair = p0; pair < p1; pair++) {
+    for (int aWhite = 1; aWhite >= 0; aWhite--) {
+      Game g; sc_new_game(&g);
+      rng_state = 1000u + (unsigned)pair * 7919u;
+      for (int i = 0; i < 4 && g.phase != PH_OVER; i++) {
+        int n = sc_available_moves(&g, mv), k = (int)(rng() % (unsigned)(n + (g.n ? 1 : 0)));
+        if (k == n) sc_game_resolve(&g); else sc_game_move(&g, mv[k].from, mv[k].to, QUEEN);
+      }
+      int starts[2] = {0, 0}, lost[2] = {0, 0}, plies = 0;
+      int pend = 0, pend_side = 0, pend_x = 0, pend_y = 0;
+      while (g.phase != PH_OVER && plies < 400) {
+        int side = g.cur, bot = (side == WHITE) == aWhite ? 0 : 1;  // 0 = A, 1 = B
+        sc_saved_rule = rule[bot];
+        S st; sc_s_from_game(&g, &st);
+        double nodes;
+        if (!sc_root_search(&st, &cfg, res, &nodes)) break;
+        Act a = res[0].a;
+        if (a.t == A_RESOLVE || a.t == A_RESOLVE_MOVE) sc_game_resolve(&g);
+        if (!pend || g.n == 0) {
+          if (pend && g.n == 0) { starts[pend_side]++; if (!alive_id(&g, pend_x) && alive_id(&g, pend_y)) lost[pend_side]++; pend = 0; }
+        }
+        if (a.t != A_RESOLVE && g.phase != PH_OVER) {
+          int x = g.st.board[a.m.from], y = g.st.board[a.m.to];
+          if (!g.n && !pend && x && y && PCOLOR(y) != PCOLOR(x)) { pend = 1; pend_side = bot; pend_x = g.st.id[a.m.from]; pend_y = g.st.id[a.m.to]; }
+          sc_game_move(&g, a.m.from, a.m.to, a.m.promo ? QUEEN : 0);
+        }
+        if (pend && g.n == 0) { starts[pend_side]++; if (!alive_id(&g, pend_x) && alive_id(&g, pend_y)) lost[pend_side]++; pend = 0; }
+        plies++;
+      }
+      char aCol = aWhite ? 'w' : 'b', win = g.result == R_WHITE ? 'w' : g.result == R_BLACK ? 'b' : '-';
+      printf("game %d %c %c %d %d %d %d %d\n", pair, aCol, win, plies, starts[0], lost[0], starts[1], lost[1]);
+      fflush(stdout);
+    }
+  }
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr, "usage: sc replay | search D | perft D | bench D [file] | selfplay D [seed]\n");
@@ -202,6 +255,7 @@ int main(int argc, char **argv) {
   else if (!strcmp(cmd, "search")) cmd_search(d);
   else if (!strcmp(cmd, "perft")) cmd_perft(d);
   else if (!strcmp(cmd, "bench")) cmd_bench(d, argc > 3 ? argv[3] : "engine/test/positions.txt");
+  else if (!strcmp(cmd, "match")) cmd_match(argc, argv);
   else if (!strcmp(cmd, "selfplay")) cmd_selfplay(d, argc > 3 ? (unsigned)atoi(argv[3]) : (unsigned)time(0));
   else { fprintf(stderr, "unknown command %s\n", cmd); return 1; }
   return 0;

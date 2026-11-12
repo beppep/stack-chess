@@ -153,6 +153,29 @@ double sc_threat_material(const Pos *p, int c) {
   return score;
 }
 
+int sc_saved_rule = 0;
+
+// Is the piece of colour c on sq attacked by an enemy piece that has no move on the stack yet?
+static int free_attacker(const S *s, int sq, int c) {
+  const Pos *p = &s->st;
+  int r = sq >> 3, f = sq & 7, pr = c == WHITE ? r - 1 : r + 1;
+#define FREE(q, i) ((q) && PCOLOR(q) != c && !on_stack(s, p->id[i]))
+  if (pr >= 0 && pr < 8) for (int df = -1; df <= 1; df += 2) { int ff = f + df; if (ff >= 0 && ff < 8) { int i = pr * 8 + ff, q = p->board[i]; if (PTYPE(q) == PAWN && FREE(q, i)) return 1; } }
+  for (int k = 0; k < 8; k++) { int rr = r + KN[k][0], ff = f + KN[k][1]; if (rr >= 0 && rr < 8 && ff >= 0 && ff < 8) { int i = rr * 8 + ff, q = p->board[i]; if (PTYPE(q) == KNIGHT && FREE(q, i)) return 1; } }
+  for (int k = 0; k < 8; k++) { int rr = r + KG[k][0], ff = f + KG[k][1]; if (rr >= 0 && rr < 8 && ff >= 0 && ff < 8) { int i = rr * 8 + ff, q = p->board[i]; if (PTYPE(q) == KING && FREE(q, i)) return 1; } }
+  for (int k = 0; k < 8; k++) {
+    for (int rr = r + QD[k][0], ff = f + QD[k][1]; rr >= 0 && rr < 8 && ff >= 0 && ff < 8; rr += QD[k][0], ff += QD[k][1]) {
+      int i = rr * 8 + ff, q = p->board[i];
+      if (!q) continue;
+      int t = PTYPE(q);
+      if ((t == QUEEN || (k < 4 ? t == ROOK : t == BISHOP)) && FREE(q, i)) return 1;
+      break;
+    }
+  }
+#undef FREE
+  return 0;
+}
+
 double sc_evaluate(const S *s) {
   if (!s->n) return sc_threat_material(&s->st, s->cur);
   S t;
@@ -167,6 +190,7 @@ double sc_evaluate(const S *s) {
     if (!pc || PCOLOR(pc) != s->cur) continue;
     int id = s->st.id[sq];
     if (alive[id & 31] || on_stack(s, id) || !sc_piece_moves(&s->st, sq, tmp)) continue;
+    if (sc_saved_rule == 2 || (sc_saved_rule == 1 && free_attacker(s, sq, s->cur))) continue;
     if (PTYPE(pc) == KING) king_saved = 1;
     else if (VAL[PTYPE(pc)] > saved) saved = VAL[PTYPE(pc)];
   }
