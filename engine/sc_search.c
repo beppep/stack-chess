@@ -1,0 +1,380 @@
+// The computer opponent: a port of bot.js (alpha-beta with stack extensions, position table,
+// killer moves, late move reductions, and the evaluate/threatMaterial scoring).
+// It gives the same scores and visits the same nodes as bot.js at the same depth.
+#include "sc.h"
+
+#define INF (__builtin_inf())
+static const int VAL[7] = {0, 100, 310, 320, 500, 900, 0};
+// 0.9 ** k exactly as JavaScript computes it.
+static const double P9[40] = {
+  1.0000000000000000, 0.90000000000000002, 0.81000000000000005, 0.72900000000000009, 0.65610000000000013,
+  0.59049000000000007, 0.53144100000000005, 0.47829690000000008, 0.43046721000000010, 0.38742048900000009,
+  0.34867844010000010, 0.31381059609000006, 0.28242953648100011, 0.25418658283290008, 0.22876792454961009,
+  0.20589113209464907, 0.18530201888518416, 0.16677181699666577, 0.15009463529699918, 0.13508517176729928,
+  0.12157665459056935, 0.10941898913151242, 0.098477090218361180, 0.088629381196525053, 0.079766443076872556,
+  0.071789798769185301, 0.064610818892266775, 0.058149737003040096, 0.052334763302736093, 0.047101286972462478,
+  0.042391158275216237, 0.038152042447694615, 0.034336838202925150, 0.030903154382632636, 0.027812838944369374,
+  0.025031555049932437, 0.022528399544939195, 0.020275559590445275, 0.018248003631400750, 0.016423203268260675};
+
+static const int8_t KN[8][2] = {{-2,-1},{-2,1},{-1,-2},{-1,2},{1,-2},{1,2},{2,-1},{2,1}};
+static const int8_t KG[8][2] = {{-1,-1},{-1,0},{-1,1},{0,-1},{0,1},{1,-1},{1,0},{1,1}};
+static const int8_t QD[8][2] = {{-1,0},{1,0},{0,-1},{0,1},{-1,-1},{-1,1},{1,-1},{1,1}};
+
+void sc_s_from_game(const Game *g, S *s) {
+  s->st = g->st;
+  s->n = g->n;
+  for (int i = 0; i < g->n; i++) s->stack[i] = g->stack[i];
+  s->cur = g->cur;
+  s->winner = -1;
+}
+
+void sc_s_resolve(const S *s, S *out) {
+  out->st = s->st;
+  out->n = 0; out->cur = s->cur; out->winner = -1;
+  for (int i = s->n - 1; i >= 0; i--) {
+    const Move *e = &s->stack[i];
+    if (!sc_still_valid(&out->st, e)) continue;
+    int cap = sc_apply_move(&out->st, e);
+    if (cap && PTYPE(cap) == KING) { out->winner = e->player; break; }
+  }
+}
+
+static inline int on_stack(const S *s, int id) {
+  for (int j = 0; j < s->n; j++) if (s->stack[j].id == id) return 1;
+  return 0;
+}
+
+int sc_s_actions(const S *s, Act *out, S *resolved) {
+  Move mv[MAX_MOVES];
+  int n = sc_legal_moves(&s->st, s->cur, mv), k = 0;
+  for (int i = 0; i < n; i++) if (!on_stack(s, mv[i].id)) { out[k].t = A_MOVE; out[k].m = mv[i]; k++; }
+  if (s->n) {
+    sc_s_resolve(s, resolved);
+    if (resolved->winner >= 0) { out[k].t = A_RESOLVE; k++; }
+    else {
+      n = sc_legal_moves(&resolved->st, resolved->cur, mv);
+      for (int i = 0; i < n; i++) { out[k].t = A_RESOLVE_MOVE; out[k].m = mv[i]; k++; }
+    }
+  }
+  return k;
+}
+
+void sc_s_apply(const S *s, const Act *a, const S *resolved, S *out) {
+  if (a->t == A_RESOLVE) { *out = *resolved; return; }
+  const S *base = a->t == A_RESOLVE_MOVE ? resolved : s;
+  out->st = base->st;
+  out->n = base->n;
+  for (int i = 0; i < base->n; i++) out->stack[i] = base->stack[i];
+  Move m = a->m;
+  if (m.promo) m.promo_to = QUEEN;
+  m.player = s->cur;
+  out->stack[out->n++] = m;
+  out->cur = s->cur ^ 1;
+  out->winner = -1;
+}
+
+int sc_order_score(const S *s, const Act *a, const S *resolved) {
+  if (a->t == A_RESOLVE) return WIN;
+  const uint8_t *b = a->t == A_RESOLVE_MOVE ? resolved->st.board : s->st.board;
+  int target = b[a->m.to], mover = b[a->m.from];
+  if (!target) return a->m.promo ? 800 : 0;
+  if (PTYPE(target) == KING) return WIN;
+  return VAL[PTYPE(target)] * 10 - VAL[PTYPE(mover)];
+}
+
+int sc_act_key(const Act *a) {
+  if (a->t == A_RESOLVE) return -1;
+  return (a->t == A_MOVE ? 0 : 4096) + a->m.from * 64 + a->m.to;
+}
+
+// Stable sort by order score, highest first (same as JS Array.prototype.sort, which is stable).
+static void sort_acts(Act *acts, int *score, int n) {
+  for (int i = 1; i < n; i++) {
+    Act a = acts[i]; int sc = score[i], j = i - 1;
+    while (j >= 0 && score[j] < sc) { acts[j + 1] = acts[j]; score[j + 1] = score[j]; j--; }
+    acts[j + 1] = a; score[j + 1] = sc;
+  }
+}
+
+int sc_ordered_actions(const S *s, Act *out, S *resolved) {
+  int n = sc_s_actions(s, out, resolved), score[MAX_ACTS];
+  for (int i = 0; i < n; i++) score[i] = sc_order_score(s, &out[i], resolved);
+  sort_acts(out, score, n);
+  return n;
+}
+
+// ---------- Evaluation ----------
+double sc_threat_material(const Pos *p, int c) {
+  const uint8_t *b = p->board;
+  int hits[64], fresh[64], pairs[1024], n = 0;
+  for (int i = 0; i < 64; i++) { hits[i] = 0; fresh[i] = 0; }
+#define HIT(from, to) do { hits[to]++; pairs[n++] = (from); pairs[n++] = (to); } while (0)
+  for (int sq = 0; sq < 64; sq++) {
+    int pc = b[sq];
+    if (!pc) continue;
+    int r = sq >> 3, f = sq & 7, col = PCOLOR(pc), t = PTYPE(pc);
+    if (t == PAWN) {
+      int r1 = r + (col == WHITE ? -1 : 1);
+      if (r1 < 0 || r1 > 7) continue;
+      if (f > 0) { int q = b[r1 * 8 + f - 1]; if (q && PCOLOR(q) != col) HIT(sq, r1 * 8 + f - 1); }
+      if (f < 7) { int q = b[r1 * 8 + f + 1]; if (q && PCOLOR(q) != col) HIT(sq, r1 * 8 + f + 1); }
+    } else if (t == KNIGHT || t == KING) {
+      const int8_t (*dirs)[2] = t == KNIGHT ? KN : KG;
+      for (int i = 0; i < 8; i++) {
+        int rr = r + dirs[i][0], cc = f + dirs[i][1];
+        if (rr < 0 || rr > 7 || cc < 0 || cc > 7) continue;
+        int q = b[rr * 8 + cc];
+        if (q && PCOLOR(q) != col) HIT(sq, rr * 8 + cc);
+      }
+    } else {
+      int d0 = t == BISHOP ? 4 : 0, d1 = t == ROOK ? 4 : 8;
+      for (int i = d0; i < d1; i++) {
+        int dr = QD[i][0], dc = QD[i][1], rr = r + dr, cc = f + dc;
+        while (rr >= 0 && rr < 8 && cc >= 0 && cc < 8) {
+          int q = b[rr * 8 + cc];
+          if (q) { if (PCOLOR(q) != col) HIT(sq, rr * 8 + cc); break; }
+          rr += dr; cc += dc;
+        }
+      }
+    }
+  }
+#undef HIT
+  for (int i = 0; i < n; i += 2) if (!hits[pairs[i]]) fresh[pairs[i + 1]]++;
+  double score = 0;
+  for (int sq = 0; sq < 64; sq++) {
+    int pc = b[sq];
+    if (!pc) continue;
+    int sign = PCOLOR(pc) == c ? 1 : -1;
+    if (PTYPE(pc) == KING) {
+      score -= sign * 10 * hits[sq];
+      if (hits[sq] >= 2) score -= sign * WIN / 2;
+    } else score += (double)(sign * VAL[PTYPE(pc)]) * P9[fresh[sq]];
+  }
+  return score;
+}
+
+double sc_evaluate(const S *s) {
+  if (!s->n) return sc_threat_material(&s->st, s->cur);
+  S t;
+  sc_s_resolve(s, &t);
+  if (t.winner == s->cur) return WIN;
+  uint8_t alive[32] = {0};
+  for (int i = 0; i < 64; i++) if (t.st.board[i]) alive[t.st.id[i] & 31] = 1;
+  int saved = 0, king_saved = 0;
+  Move tmp[MAX_MOVES];
+  for (int sq = 0; sq < 64; sq++) {
+    int pc = s->st.board[sq];
+    if (!pc || PCOLOR(pc) != s->cur) continue;
+    int id = s->st.id[sq];
+    if (alive[id & 31] || on_stack(s, id) || !sc_piece_moves(&s->st, sq, tmp)) continue;
+    if (PTYPE(pc) == KING) king_saved = 1;
+    else if (VAL[PTYPE(pc)] > saved) saved = VAL[PTYPE(pc)];
+  }
+  if (t.winner >= 0) return king_saved ? sc_threat_material(&t.st, s->cur) : -WIN;
+  return sc_threat_material(&t.st, s->cur) + saved;
+}
+
+// ---------- Search ----------
+#define MAX_STACK_EXT 6
+#define LMR_AFTER 3
+int sc_lmr = 1;
+
+static int stack_related(const S *s, const Act *a) {
+  if (a->t != A_MOVE || !s->n) return 0;
+  int target = s->st.board[a->m.to];
+  if (target && PCOLOR(target) != s->cur && on_stack(s, s->st.id[a->m.to])) return 1;
+  for (int j = 0; j < s->n; j++) if (s->stack[j].player != s->cur && s->stack[j].to == a->m.from) return 1;
+  return 0;
+}
+
+// End of the search: before the score counts, the side to act may still make its free replies
+// (capture a piece whose move is on the stack, or move a piece a stack move aims at). Letting the
+// stack resolve as it is (the score) is always one of the options. Same as quiet() in bot.js.
+static double quiet(const S *s, double alpha, double beta, int ply, int ext) {
+  double best = sc_evaluate(s);
+  if (best >= beta || ext >= MAX_STACK_EXT || !s->n) return best;
+  if (best > alpha) alpha = best;
+  // Only plain moves can be stack related, so the resolve actions of sActions() are skipped here.
+  Move mv[MAX_MOVES];
+  int n = sc_legal_moves(&s->st, s->cur, mv);
+  Act a; S c;
+  a.t = A_MOVE;
+  for (int i = 0; i < n; i++) {
+    if (on_stack(s, mv[i].id)) continue;
+    a.m = mv[i];
+    if (!stack_related(s, &a)) continue;
+    sc_s_apply(s, &a, 0, &c);
+    double v = c.winner >= 0 ? (c.winner == s->cur ? WIN - ply - 1 : -(WIN - ply - 1)) : -quiet(&c, -beta, -alpha, ply + 1, ext + 1);
+    if (v > best) best = v;
+    if (v > alpha) alpha = v;
+    if (alpha >= beta) break;
+  }
+  return best;
+}
+
+// Zobrist numbers, the same xorshift sequence as bot.js.
+static int32_t ZOB[2 * 32 * 8 * 64];
+static int zob_ready = 0;
+static void zob_init(void) {
+  uint32_t x = 0x2545F491u;
+  for (int i = 0; i < 2 * 32 * 8 * 64; i++) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; ZOB[i] = (int32_t)x; }
+  zob_ready = 1;
+}
+static inline uint32_t imul(uint32_t a, uint32_t b) { return a * b; }
+static int64_t pos_key(const S *s) {
+  const int half = 32 * 8 * 64;
+  uint32_t h1 = s->cur == WHITE ? 1 : 2, h2 = 7;
+  for (int i = 0; i < 64; i++) {
+    int pc = s->st.board[i];
+    if (!pc) continue;
+    int k = (((s->st.id[i] & 31) * 8 + PTYPE(pc) - 1) << 6) + i;
+    h1 ^= (uint32_t)ZOB[k]; h2 ^= (uint32_t)ZOB[half + k];
+  }
+  uint32_t cs = s->st.castle; // bits wK 1, wQ 2, bK 4, bQ 8, as in bot.js
+  uint32_t ep = s->st.ep_sq >= 0 ? (uint32_t)(s->st.ep_sq + 1) : 0;
+  h1 = imul(h1 ^ (cs | (ep << 4)), 0x9E3779B1u);
+  for (int j = 0; j < s->n; j++) {
+    const Move *e = &s->stack[j];
+    uint32_t x = e->from | (e->to << 6) | ((e->id & 31) << 12) | ((e->player == WHITE ? 1u : 0u) << 17) | ((e->promo_to ? 1u : 0u) << 18);
+    uint32_t o1 = h1, o2 = h2;
+    h1 = imul(o1 ^ x, 0x85EBCA6Bu) ^ (o1 >> 15);
+    h2 = imul(o2 ^ x, 0xC2B2AE35u) ^ (o2 >> 13);
+  }
+  return (int64_t)(int32_t)h1 * 2097152 + (int64_t)(h2 & 2097151);
+}
+
+// Position table: open addressing with a generation stamp, so clearing is instant.
+// Like the JS Map, it holds at most TT_MAX positions and stops storing when full.
+#define TT_BITS 20
+#define TT_SIZE (1 << TT_BITS)
+#define TT_MAX 400000
+typedef struct { int64_t key; double v; uint32_t gen; int16_t best; int8_t depth, ext, ply, flag; } TTE;
+static TTE TT[TT_SIZE];
+static uint32_t tt_gen = 0;
+static int tt_count = 0;
+static void tt_clear(void) { tt_gen++; tt_count = 0; }
+static inline uint32_t tt_slot(int64_t key) { uint64_t k = (uint64_t)key * 0x9E3779B97F4A7C15ull; return (uint32_t)(k >> (64 - TT_BITS)); }
+static TTE *tt_find(int64_t key) {
+  for (uint32_t i = tt_slot(key);; i = (i + 1) & (TT_SIZE - 1)) {
+    TTE *e = &TT[i];
+    if (e->gen != tt_gen) return 0;
+    if (e->key == key) return e;
+  }
+}
+static void tt_store(int64_t key, int depth, int ext, int ply, double v, int flag, int best) {
+  if (tt_count >= TT_MAX) return;
+  uint32_t i = tt_slot(key);
+  for (;; i = (i + 1) & (TT_SIZE - 1)) {
+    if (TT[i].gen != tt_gen) { tt_count++; break; }
+    if (TT[i].key == key) break;
+  }
+  TTE *e = &TT[i];
+  e->key = key; e->gen = tt_gen; e->v = v; e->depth = depth; e->ext = ext; e->ply = ply; e->flag = flag; e->best = best;
+}
+
+#define MAX_PLY 128
+#define NO_KILLER 100000
+typedef struct { double nodes, limit; int abort; int killers[MAX_PLY]; } Ctx;
+
+static void move_to(Act *acts, int from, int to) {  // acts.splice(to, 0, acts.splice(from, 1)[0])
+  Act a = acts[from];
+  if (from > to) for (int j = from; j > to; j--) acts[j] = acts[j - 1];
+  else for (int j = from; j < to; j++) acts[j] = acts[j + 1];
+  acts[to] = a;
+}
+
+static double search(const S *s, int depth, double alpha, double beta, int ply, Ctx *ctx, int ext) {
+  if (depth == 0) return quiet(s, alpha, beta, ply, ext);
+  if (++ctx->nodes > ctx->limit) { ctx->abort = 1; return 0; }
+  int64_t key = pos_key(s);
+  TTE *hit = tt_find(key);
+  if (hit && hit->depth == depth && hit->ext == ext && hit->ply == ply) {
+    if (hit->flag == 0 || (hit->flag == 1 && hit->v >= beta) || (hit->flag == -1 && hit->v <= alpha)) return hit->v;
+  }
+  double alpha0 = alpha;
+  Act acts[MAX_ACTS];
+  S r;
+  int n = sc_ordered_actions(s, acts, &r);
+  if (!n) return 0;
+  if (hit) {
+    for (int i = 0; i < n; i++) if (sc_act_key(&acts[i]) == hit->best) { if (i > 0) move_to(acts, i, 0); break; }
+  }
+  int kill = ply < MAX_PLY ? ctx->killers[ply] : NO_KILLER;
+  if (kill != NO_KILLER) {
+    for (int i = 0; i < n; i++) if (sc_act_key(&acts[i]) == kill) {
+      if (i > 1 || (i == 1 && !hit)) move_to(acts, i, hit ? 1 : 0);
+      break;
+    }
+  }
+  double best = -INF;
+  int best_key = 0;
+  S c;
+  for (int i = 0; i < n; i++) {
+    const Act *a = &acts[i];
+    sc_s_apply(s, a, &r, &c);
+    double v;
+    int fr = ext < MAX_STACK_EXT && stack_related(s, a);
+    int nd = fr ? depth : depth - 1, ne = fr ? ext + 1 : ext;
+    int reduce = sc_lmr && nd >= 1 && i >= LMR_AFTER && !fr && sc_order_score(s, a, &r) == 0;
+    if (c.winner >= 0) v = c.winner == s->cur ? WIN - ply - 1 : -(WIN - ply - 1);
+    else {
+      int same = c.cur == s->cur;
+      int d = reduce ? nd - 1 : nd;
+      v = same ? search(&c, d, alpha, beta, ply + 1, ctx, ne) : -search(&c, d, -beta, -alpha, ply + 1, ctx, ne);
+      if (ctx->abort) return 0;
+      if (reduce && v > alpha) {
+        v = same ? search(&c, nd, alpha, beta, ply + 1, ctx, ne) : -search(&c, nd, -beta, -alpha, ply + 1, ctx, ne);
+        if (ctx->abort) return 0;
+      }
+    }
+    if (v > best) { best = v; best_key = sc_act_key(a); }
+    if (v > alpha) alpha = v;
+    if (alpha >= beta) { if (ply < MAX_PLY) ctx->killers[ply] = sc_act_key(a); break; }
+  }
+  tt_store(key, depth, ext, ply, best, best <= alpha0 ? -1 : best >= beta ? 1 : 0, best_key);
+  return best;
+}
+
+int sc_root_search(const S *s, const SearchCfg *cfg, RootResult *out, double *nodes_out) {
+  if (!zob_ready) zob_init();
+  static Ctx ctx;
+  ctx.nodes = 0; ctx.abort = 0;
+  for (int i = 0; i < MAX_PLY; i++) ctx.killers[i] = NO_KILLER;
+  tt_clear();
+  Act acts[MAX_ACTS];
+  S r, c;
+  int n = sc_ordered_actions(s, acts, &r);
+  for (int i = 0; i < n; i++) { out[i].a = acts[i]; out[i].v = 0; }
+  RootResult round[MAX_ACTS];
+  int min_depth = cfg->min_depth ? cfg->min_depth : 2;
+  for (int d = 1; d <= cfg->max_depth; d++) {
+    ctx.limit = d <= min_depth ? INF : cfg->node_limit;
+    double alpha = -INF;
+    for (int i = 0; i < n; i++) {
+      const Act *a = &acts[i];
+      sc_s_apply(s, a, &r, &c);
+      double v;
+      int fr = stack_related(s, a);
+      int nd = fr ? d : d - 1, ne = fr ? 1 : 0;
+      if (c.winner >= 0) v = c.winner == s->cur ? WIN : -WIN;
+      else {
+        double lo = alpha - 1;
+        v = c.cur == s->cur ? search(&c, nd, lo, INF, 1, &ctx, ne) : -search(&c, nd, -INF, -lo, 1, &ctx, ne);
+        if (ctx.abort) break;
+        if (v <= lo) v = -INF;
+      }
+      round[i].a = *a; round[i].v = v;
+      if (v > alpha) alpha = v;
+    }
+    if (ctx.abort) break;  // out of nodes: keep the last finished depth
+    // Stable sort, best first. Two -Infinity scores count as equal.
+    for (int i = 1; i < n; i++) {
+      RootResult x = round[i]; int j = i - 1;
+      while (j >= 0 && round[j].v < x.v) { round[j + 1] = round[j]; j--; }
+      round[j + 1] = x;
+    }
+    for (int i = 0; i < n; i++) { out[i] = round[i]; acts[i] = round[i].a; }
+  }
+  if (nodes_out) *nodes_out = ctx.nodes;
+  return n;
+}
