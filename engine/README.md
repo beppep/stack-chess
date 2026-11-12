@@ -13,7 +13,7 @@ bot-vs-bot tournaments and, later, neural-network training. It is not used by th
 - `sc_search.c`: the bot (alpha-beta with stack extensions, position table, killer moves,
   late move reductions, `evaluate` / `threatMaterial`). It gives exactly the same scores and node counts as `bot.js`.
 - `sc_cli.c`: native command line.
-- `sc_wasm.c`: WebAssembly exports (one game held in the module), no libc.
+- `sc_wasm.c`: WebAssembly exports (one game held in the module), no libc. `worker.js` runs it for the site's hard level.
 - `test/`: Node scripts that load the site's `rules.js` and `bot.js` and compare.
 - `sc_nn.c`, `nn/`: neural-network scoring (first try), see `nn/README.md`.
 
@@ -44,7 +44,8 @@ echo "m52-36 m12-28 r" | engine/build/sc search 3   # root scores of a position 
 node engine/test/parity.mjs 10000     # random games: rules.js vs C after every action
 node engine/test/botparity.mjs 3 100  # bot.js vs C search: same scores and node counts at depth 3
 node engine/test/bench.mjs 3          # bot.js timing on the benchmark positions
-node engine/test/wasm.mjs 3           # sc.wasm loads with no imports and matches the native build
+node engine/test/wasm.mjs 3           # sc.wasm loads (one import: the clock) and matches the native build
+node engine/test/worker.mjs 1 700     # games through worker.js (the site's hard level): network vs the old hard settings
 ```
 
 `parity.mjs` compares, after every action: board with piece ids, castling, en passant, side to act, phase,

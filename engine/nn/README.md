@@ -64,6 +64,34 @@ Training on both rounds helps at equal time (about 10 points over round one on t
 much worse. The equal-time score of `hybrid1.net` was 53.8% on other openings earlier, so single runs of
 80 openings move by several points.
 
+## Round three (self-play by `hybrid2.net`), and the scoring change on main
+
+`hybrid2.net` played itself: 6,400 games at depth 2 (`sc gen 2 800 700<i> data/h3_<i>.bin 30 engine/nn/hybrid2.net 1`),
+935,000 positions, about 31% drawn or stopped at 300 actions.
+
+Meanwhile main changed the classic scoring (saved rule 1, king rule 2, frozen pieces keep 60%; each change beat the
+old bot). The residual network adds its correction to threatMaterial, so the `.tm` bases of all three rounds were
+recomputed with the new scoring, and `hybrid3.net` was trained on all of it (2,606,951 positions, 2 epochs, validation
+0.0377 against 0.0479 for threatMaterial alone).
+
+`sc nnmatch D pairs seed net [netD] [residual] [ms] [netbot] [classicbot]` takes scoring settings for each side
+(`s1k2f0.6` is the new scoring, `s0k0f0.9` the old one). Against the new classic bot, 200 ms per move each,
+the same 80 openings (`nnmatch 2 5 <s*1237> ... 2 1 200`):
+
+| network | score |
+|---|---|
+| round 3, `hybrid3.net` (new scoring + network) | 61 W, 1 D, 18 L = **76.9%** |
+| round 2, `hybrid2.net` on the old scoring it was trained with | 24 W, 2 D, 54 L = 31.3% |
+
+## On the website (hard level)
+
+`engine/worker.js` loads `nn/hybrid3.net` (393 KB of float32 weights) into `sc.wasm` and scores boards with
+threatMaterial + network; without the file it plays with threatMaterial alone. The hard level searches to depth 3, then
+deeper until 700 ms have passed (`sc_w_think(30, 3, 1e18, 700)`; the wasm reads the clock through its one import,
+`env.now_ms`). The engine it replaces (30,000 nodes, no network) took about 750 ms per move in the browser on this PC.
+`node engine/test/worker.mjs pairs ms seed` plays games through `worker.js` itself: the network at `ms` per move
+against the old hard settings.
+
 ## Next ideas
 
 - A third round from `hybrid2.net`, always keeping the earlier rounds' data in the training set.

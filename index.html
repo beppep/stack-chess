@@ -1773,10 +1773,12 @@ ul.puzzles .btn.mode.solved .ic { color: var(--ok); }
   });
 
   // ---------- Computer opponent (play) ----------
-  // Hard is the C engine (engine/sc.wasm) in a background worker: the same search as bot.js, about
-  // 12 times faster, so it searches about 6 times as many positions in the same time. If the engine
-  // fails to load or answer, the JavaScript bot plays the move instead.
-  const ENGINE_HARD = { maxDepth: 30, minDepth: 3, nodes: 30000 };
+  // Hard is the C engine (engine/sc.wasm) in a background worker: the search of bot.js, about 12 times
+  // faster, scoring boards with a small neural network (engine/nn/hybrid3.net, see engine/nn/README.md).
+  // It searches to depth 3, then deeper until 700 ms have passed: about the time per move of the
+  // 30,000-node engine without the network it replaces. If the engine fails to load or answer, the
+  // JavaScript bot plays the move instead.
+  const ENGINE_HARD = { maxDepth: 30, minDepth: 3, nodes: 1e18, ms: 700 };
   const BOT = { worker: null, finish: null };
   function chooseActionAsync(G, level) {
     if (level !== 'hard' || typeof Worker === 'undefined' || typeof WebAssembly === 'undefined') return Promise.resolve(chooseAction(G, level));

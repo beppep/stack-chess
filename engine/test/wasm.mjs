@@ -1,4 +1,4 @@
-// Checks engine/build/sc.wasm: it loads with no imports, and its bot gives the same best score and
+// Checks engine/build/sc.wasm: it loads with only the clock import (env.now_ms), and its bot gives the same best score and
 // node count as the native build on the benchmark positions.
 //   node engine/test/wasm.mjs [depth=3]
 import fs from 'node:fs';
@@ -10,7 +10,7 @@ const depth = +(process.argv[2] || 3);
 const bytes = fs.readFileSync(path.join(engineDir, 'build', 'sc.wasm'));
 const mod = await WebAssembly.compile(bytes);
 console.log('imports:', WebAssembly.Module.imports(mod).length, ' exports:', WebAssembly.Module.exports(mod).map(e => e.name).filter(n => n.startsWith('sc_w')).join(' '));
-const { exports: W } = await WebAssembly.instantiate(mod, {});
+const { exports: W } = await WebAssembly.instantiate(mod, { env: { now_ms: () => performance.now() } });
 
 const lines = fs.readFileSync(path.join(engineDir, 'test', 'positions.txt'), 'utf8').split(/\r?\n/).filter(l => l.trim() && !l.startsWith('#'));
 const native = execFileSync(exe, ['search', String(depth)], { input: lines.join('\n') + '\n' }).toString().trim().split(/\r?\n/);
