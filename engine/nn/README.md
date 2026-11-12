@@ -46,9 +46,27 @@ The plain network alone (no hand-written knowledge of attacks) loses.
 Training notes: the plain network keeps improving for about 6 epochs (validation 0.0489, versus 0.058 for
 threatMaterial alone); the hybrid overfits after 2 epochs, so it was trained for 2.
 
+## Round two (self-play by the hybrid bot)
+
+The round-one hybrid (`hybrid1.net`) played itself: 6,400 games at depth 2, same random openings and noise
+(`sc gen 2 800 <seed> data/h2_<i>.bin 30 engine/nn/hybrid1.net 1`), 873,529 positions.
+These games are much more drawish: about 30% drawn or stopped at 300 actions (round one: 2%).
+Two candidates, both hybrids trained 2 epochs:
+
+| network | validation loss | vs classic, 200 ms per move (same 80 openings, both colors) | vs classic, both depth 3 |
+|---|---|---|---|
+| round 1, `hybrid1.net` (control) | | 72 W, 2 D, 86 L = 45.6% | 78% |
+| round 2, trained on round-two games only | 0.0416 | 43 W, 3 D, 114 L = 27.8% | |
+| round 2, trained on both rounds, `hybrid2.net` | 0.0399 | 87 W, 3 D, 70 L = **55.3%** | 76 W, 2 D, 18 L = 80.2% |
+
+Training on both rounds helps at equal time (about 10 points over round one on the same openings: about
+1.8 standard errors, suggestive rather than proven). Training only on the hybrid's own drawish games makes it
+much worse. The equal-time score of `hybrid1.net` was 53.8% on other openings earlier, so single runs of
+80 openings move by several points.
+
 ## Next ideas
 
-- Second generation: self-play with the hybrid bot (`sc gen ... net.bin 1`), deeper games, more data, retrain.
+- A third round from `hybrid2.net`, always keeping the earlier rounds' data in the training set.
 - Make scoring cheaper, so the knowledge also wins at equal time: integer weights, fewer hidden units,
   and a faster `threatMaterial` (which helps both bots).
 - Attack inputs for the network (which squares each side attacks), so it can learn what threatMaterial knows.
