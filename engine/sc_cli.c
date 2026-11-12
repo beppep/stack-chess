@@ -197,6 +197,20 @@ static void cmd_selfplay(int depth, unsigned seed) {
 //   game <pair> <A colour w|b> <winner w|b|-> <bot actions> <A starts> <A lost> <B starts> <B lost>
 // "starts": captures a side put on an empty stack; "lost": of those, the capturing piece was taken and the
 // target survived once the stack resolved (starting a fight and losing it).
+// A bot's settings: "s<saved rule>k<king rule>f<frozen factor>", any part may be left out (a plain number = saved rule).
+typedef struct { int saved, king; double frozen; } BotCfg;
+static BotCfg parse_bot(const char *t) {
+  BotCfg b = {0, 0, 0.9};
+  if (*t >= '0' && *t <= '9') { b.saved = atoi(t); return b; }
+  while (*t) {
+    char k = *t++;
+    double v = atof(t);
+    while (*t && !(*t >= 'a' && *t <= 'z')) t++;
+    if (k == 's') b.saved = (int)v; else if (k == 'k') b.king = (int)v; else if (k == 'f') b.frozen = v;
+  }
+  return b;
+}
+static void use_bot(BotCfg b) { sc_saved_rule = b.saved; sc_king_rule = b.king; sc_frozen = b.frozen; }
 static unsigned rng_state;
 static unsigned rng(void) { rng_state = rng_state * 1103515245u + 12345u; return rng_state >> 8; }
 static int alive_id(const Game *g, int id) { for (int i = 0; i < 64; i++) if (g->st.board[i] && g->st.id[i] == id) return 1; return 0; }
@@ -205,7 +219,7 @@ static void cmd_match(int argc, char **argv) {
   if (argc < 9) { fprintf(stderr, "usage: sc match P0 P1 NODES MAXD MIND RULE_A RULE_B\n"); exit(1); }
   int p0 = atoi(argv[2]), p1 = atoi(argv[3]);
   SearchCfg cfg = {atoi(argv[5]), atoi(argv[6]), atof(argv[4])};
-  int rule[2] = {atoi(argv[7]), atoi(argv[8])};
+  BotCfg rule[2] = {parse_bot(argv[7]), parse_bot(argv[8])};
   static RootResult res[MAX_ACTS];
   Move mv[MAX_MOVES];
   for (int pair = p0; pair < p1; pair++) {
@@ -220,7 +234,7 @@ static void cmd_match(int argc, char **argv) {
       int pend = 0, pend_side = 0, pend_x = 0, pend_y = 0;
       while (g.phase != PH_OVER && plies < 400) {
         int side = g.cur, bot = (side == WHITE) == aWhite ? 0 : 1;  // 0 = A, 1 = B
-        sc_saved_rule = rule[bot];
+        use_bot(rule[bot]);
         S st; sc_s_from_game(&g, &st);
         double nodes;
         if (!sc_root_search(&st, &cfg, res, &nodes)) break;

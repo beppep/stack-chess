@@ -8,7 +8,7 @@ import path from 'path';
 
 const [pairs, ruleA, ruleB, nodes = '2000', maxd = '6', mind = '2', procs = '7'] = process.argv.slice(2);
 if (!ruleB) { console.error('usage: node engine/test/match.mjs PAIRS RULE_A RULE_B [NODES] [MAXD] [MIND] [PROCS]'); process.exit(1); }
-const exe = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'build', process.platform === 'win32' ? 'sc.exe' : 'sc');
+const exe = process.env.SC_EXE || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'build', process.platform === 'win32' ? 'sc.exe' : 'sc');
 const n = +pairs, k = Math.min(+procs, n), t0 = Date.now();
 let games = 0, aw = 0, bw = 0, dr = 0, sa = 0, la = 0, sb = 0, lb = 0, plies = 0, running = k;
 const pct = (l, s) => (s ? (100 * l / s).toFixed(1) + '%' : '-');

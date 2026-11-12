@@ -104,6 +104,8 @@ int sc_ordered_actions(const S *s, Act *out, S *resolved) {
 }
 
 // ---------- Evaluation ----------
+int sc_king_rule = 0;     // two attackers on a king: 0 any two = half a lost game, 1 only two not attacked themselves, 2 only -300
+double sc_frozen = 0.9;   // value kept by a piece with exactly one attacker that is not attacked itself
 double sc_threat_material(const Pos *p, int c) {
   const uint8_t *b = p->board;
   int hits[64], fresh[64], pairs[1024], n = 0;
@@ -147,13 +149,13 @@ double sc_threat_material(const Pos *p, int c) {
     int sign = PCOLOR(pc) == c ? 1 : -1;
     if (PTYPE(pc) == KING) {
       score -= sign * 10 * hits[sq];
-      if (hits[sq] >= 2) score -= sign * WIN / 2;
-    } else score += (double)(sign * VAL[PTYPE(pc)]) * P9[fresh[sq]];
+      if ((sc_king_rule == 1 ? fresh[sq] : hits[sq]) >= 2) score -= sign * (sc_king_rule == 2 ? 300 : WIN / 2);
+    } else score += (double)(sign * VAL[PTYPE(pc)]) * (fresh[sq] == 1 ? sc_frozen : P9[fresh[sq]]);
   }
   return score;
 }
 
-int sc_saved_rule = 0;
+int sc_saved_rule = 1;  // 1 won 68% against 0 over 300 games (2026-11-12)
 
 // Is the piece of colour c on sq attacked by an enemy piece that has no move on the stack yet?
 static int free_attacker(const S *s, int sq, int c) {
