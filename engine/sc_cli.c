@@ -2,13 +2,19 @@
 //   sc replay              games on stdin (one per line), prints a snapshot after every action (parity test)
 //   sc search D            positions on stdin (one per line, as actions), prints bot root scores at depth D
 //   sc perft D             counts game-action sequences of length 1..D from the start
-//   sc bench D [file]      times the bot to depth D on positions (default: engine/test/positions.txt)
+//   sc bench D [file] [net.bin] [residual]   times the bot to depth D on positions (default: engine/test/positions.txt)
 //   sc selfplay D [seed]   the bot plays itself at depth D, printing every action
+//   sc gen D games seed out.bin [noise] [net.bin] [residual]   self-play training data (appends to out.bin), by the classic or a network bot
+//   sc match D pairs seed net.bin [netD] [residual] [ms]  network bot vs classic bot, pairs of games with the same opening
+//                                      (ms > 0: both think ms per move, at least depth 2, instead of fixed depths)
+//   sc tm data.bin out.f32             threatMaterial of each record (base for a residual network)
+//   sc nneval net.bin data.bin N       network output for the first N records
 // Actions are written m<from>-<to>[qrbn] (squares 0..63, a8 = 0) or r (let the stack resolve).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 #include "sc.h"
 
 static const char *LET = ".PNBRQK";
@@ -99,7 +105,7 @@ static void print_act(const Act *a) {
 
 static void cmd_search(int depth) {
   char *line; Game g; S s; RootResult res[MAX_ACTS];
-  SearchCfg cfg = {depth, depth, 1e18};
+  SearchCfg cfg = {depth, depth, 1e18, 0};
   while ((line = read_line(stdin))) {
     if (!replay_line(&g, line, 0)) { printf("ILLEGAL\n"); fflush(stdout); continue; }
     sc_s_from_game(&g, &s);
@@ -146,7 +152,7 @@ static void cmd_bench(int depth, const char *file) {
   FILE *f = fopen(file, "r");
   if (!f) { fprintf(stderr, "cannot open %s\n", file); exit(1); }
   char *line; Game g; S s; RootResult res[MAX_ACTS];
-  SearchCfg cfg = {depth, depth, 1e18};
+  SearchCfg cfg = {depth, depth, 1e18, 0};
   double total_nodes = 0, total_ms = 0;
   int k = 0;
   while ((line = read_line(f))) {
@@ -168,7 +174,7 @@ static void cmd_bench(int depth, const char *file) {
 
 static void cmd_selfplay(int depth, unsigned seed) {
   Game g; S s; RootResult res[MAX_ACTS];
-  SearchCfg cfg = {depth, depth, 1e18};
+  SearchCfg cfg = {depth, depth, 1e18, 0};
   srand(seed);
   sc_new_game(&g);
   int turns = 0;
@@ -191,7 +197,154 @@ static void cmd_selfplay(int depth, unsigned seed) {
   printf("result: %s\n", g.result == R_WHITE ? "White wins" : g.result == R_BLACK ? "Black wins" : g.result == R_DRAW ? "draw" : "unfinished");
 }
 
+// ---------- Self-play data and matches (for the neural network work) ----------
+static uint64_t rng_state = 88172645463325252ull;
+static uint32_t rnd(void) { rng_state ^= rng_state << 13; rng_state ^= rng_state >> 7; rng_state ^= rng_state << 17; return (uint32_t)(rng_state >> 32); }
+static double rndf(void) { return rnd() / 4294967296.0; }
+
+// A random legal game action (used for random openings).
+static void random_action(Game *g) {
+  Move av[MAX_MOVES];
+  int n = sc_available_moves(g, av);
+  int k = g->phase == PH_RESPOND ? n + 1 : n;
+  if (!k) return;
+  int i = rnd() % k;
+  if (i == n) sc_game_resolve(g);
+  else { static const int pr[4] = {QUEEN, ROOK, BISHOP, KNIGHT}; sc_game_move(g, av[i].from, av[i].to, pr[rnd() % 4]); }
+}
+static void play_act(Game *g, const Act *a) {
+  if (a->t != A_MOVE) sc_game_resolve(g);
+  if (a->t != A_RESOLVE && g->phase != PH_OVER) sc_game_move(g, a->m.from, a->m.to, QUEEN);
+}
+// The bot's choice: best score plus up to `noise` of random bonus (ties broken at random).
+static double move_ms = 0;  // >0: think this many ms per move (after depth 2) instead of a fixed depth
+static Act bot_choice(const Game *g, int depth, double noise, double *score) {
+  static RootResult res[MAX_ACTS];
+  S s; sc_s_from_game(g, &s);
+  SearchCfg cfg = {depth, depth, 1e18, 0};
+  if (move_ms > 0) { cfg.max_depth = 30; cfg.min_depth = 2; cfg.time_ms = move_ms; }
+  double nodes;
+  int n = sc_root_search(&s, &cfg, res, &nodes);
+  *score = res[0].v;
+  int pick = 0; double best = -1e300;
+  for (int i = 0; i < n; i++) {
+    if (res[i].v < -1e299) continue;
+    double v = res[i].v + rndf() * (noise > 0 ? noise : 1e-6);
+    if (v > best) { best = v; pick = i; }
+  }
+  return res[pick].a;
+}
+
+// One training record: a board with no stack, the side to act, the search score for it, and the game result.
+typedef struct { uint8_t board[64]; uint8_t cur; int8_t result; uint8_t pad[2]; float score; } Rec;
+
+static void cmd_gen(int depth, int games, unsigned seed, const char *outfile, double noise) {
+  FILE *f = fopen(outfile, "ab");
+  if (!f) { fprintf(stderr, "cannot write %s\n", outfile); exit(1); }
+  rng_state ^= (uint64_t)seed * 0x9E3779B97F4A7C15ull; rnd();
+  static Rec recs[2000];
+  long total = 0; int wins[3] = {0, 0, 0};
+  double t0 = now_ms();
+  for (int gi = 0; gi < games; gi++) {
+    Game g; sc_new_game(&g);
+    int opening = 4 + rnd() % 8, actions = 0, nr = 0;
+    for (int i = 0; i < opening && g.phase != PH_OVER; i++, actions++) random_action(&g);
+    while (g.phase != PH_OVER && actions < 300) {
+      double score;
+      Act a = bot_choice(&g, depth, noise, &score);
+      // Record the board as it is once the stack resolves, with this player to act: that is the kind of
+      // board the network scores inside the search. The label is this position's search score.
+      S s, t; sc_s_from_game(&g, &s); sc_s_resolve(&s, &t);
+      if (t.winner < 0 && nr < 2000) {
+        Rec *r = &recs[nr++];
+        for (int i = 0; i < 64; i++) r->board[i] = t.st.board[i];
+        r->cur = g.cur; r->score = (float)score; r->pad[0] = r->pad[1] = 0;
+      }
+      play_act(&g, &a);
+      actions += a.t == A_RESOLVE_MOVE ? 2 : 1;
+    }
+    int res = g.result == R_WHITE || g.result == R_BLACK ? g.result : 2;
+    wins[res]++;
+    for (int i = 0; i < nr; i++) recs[i].result = res == 2 ? 0 : (res == recs[i].cur ? 1 : -1);
+    fwrite(recs, sizeof(Rec), nr, f);
+    fflush(f);
+    total += nr;
+    printf("game %d: %s after %d actions, %d positions (total %ld; white %d, black %d, draw/unfinished %d) %.0fs\n", gi + 1,
+           res == 0 ? "white" : res == 1 ? "black" : "draw", actions, nr, total, wins[0], wins[1], wins[2], (now_ms() - t0) / 1000);
+    fflush(stdout);
+  }
+  fclose(f);
+}
+
+static float *load_net(const char *file) {
+  static float w[NN_FLOATS];
+  FILE *f = fopen(file, "rb");
+  if (!f || fread(w, sizeof(float), NN_FLOATS, f) != NN_FLOATS) { fprintf(stderr, "cannot read network %s\n", file); exit(1); }
+  fclose(f);
+  return w;
+}
+
+// Prints the network's output for the first n records of a data file (to check C against train.py).
+static void cmd_nneval(const char *netfile, const char *datafile, int n) {
+  sc_nn_set(load_net(netfile));
+  FILE *f = fopen(datafile, "rb");
+  if (!f) { fprintf(stderr, "cannot read %s\n", datafile); exit(1); }
+  Rec r; Pos p = {0};
+  for (int i = 0; i < n && fread(&r, sizeof r, 1, f) == 1; i++) {
+    for (int k = 0; k < 64; k++) { p.board[k] = r.board[k]; p.id[k] = 0; }
+    printf("%.4f\n", sc_nn_eval(&p, r.cur));
+  }
+  fclose(f);
+}
+
+// Writes threatMaterial (float32) for every record of a data file: the base the residual network corrects.
+static void cmd_tm(const char *datafile, const char *outfile) {
+  FILE *f = fopen(datafile, "rb"), *o = fopen(outfile, "wb");
+  if (!f || !o) { fprintf(stderr, "cannot open %s or %s\n", datafile, outfile); exit(1); }
+  Rec r; Pos p = {0};
+  while (fread(&r, sizeof r, 1, f) == 1) {
+    for (int k = 0; k < 64; k++) p.board[k] = r.board[k];
+    float v = (float)sc_threat_material(&p, r.cur);
+    fwrite(&v, sizeof v, 1, o);
+  }
+  fclose(f); fclose(o);
+}
+
+// Network bot against the classic bot, same depth. Games come in pairs with the same random opening,
+// the network playing White in one and Black in the other.
+static void cmd_match(int depth, int pairs, unsigned seed, const char *netfile, int net_depth) {
+  sc_nn_set(load_net(netfile));
+  rng_state ^= (uint64_t)seed * 0x9E3779B97F4A7C15ull; rnd();
+  int w = 0, d = 0, l = 0;
+  double ms[2] = {0, 0}; long moves[2] = {0, 0};
+  for (int pi = 0; pi < pairs; pi++) {
+    Game start; sc_new_game(&start);
+    int opening = 4 + rnd() % 8;
+    for (int i = 0; i < opening && start.phase != PH_OVER; i++) random_action(&start);
+    for (int nn_color = 0; nn_color < 2; nn_color++) {
+      Game g = start;
+      int actions = opening;
+      while (g.phase != PH_OVER && actions < 300) {
+        int nn = g.cur == nn_color;
+        sc_board_eval = nn ? sc_nn_eval : sc_threat_material;
+        double score, t = now_ms();
+        Act a = bot_choice(&g, nn ? net_depth : depth, 0, &score);
+        ms[nn] += now_ms() - t; moves[nn]++;
+        play_act(&g, &a);
+        actions += a.t == A_RESOLVE_MOVE ? 2 : 1;
+      }
+      if (g.result == nn_color) w++; else if (g.result == (nn_color ^ 1)) l++; else d++;
+    }
+    double p = (w + 0.5 * d) / (w + d + l);
+    double elo = p <= 0 ? -999 : p >= 1 ? 999 : -400 * log10(1 / p - 1);
+    printf("pair %d: network %d wins, %d draws, %d losses = %.1f%% (Elo %+.0f); ms/move network %.1f, classic %.1f\n",
+           pi + 1, w, d, l, 100 * p, elo, ms[1] / (moves[1] ? moves[1] : 1), ms[0] / (moves[0] ? moves[0] : 1));
+    fflush(stdout);
+  }
+}
+
 int main(int argc, char **argv) {
+  sc_clock_ms = now_ms;
   if (argc < 2) {
     fprintf(stderr, "usage: sc replay | search D | perft D | bench D [file] | selfplay D [seed]\n");
     return 1;
@@ -201,7 +354,17 @@ int main(int argc, char **argv) {
   if (!strcmp(cmd, "replay")) cmd_replay();
   else if (!strcmp(cmd, "search")) cmd_search(d);
   else if (!strcmp(cmd, "perft")) cmd_perft(d);
-  else if (!strcmp(cmd, "bench")) cmd_bench(d, argc > 3 ? argv[3] : "engine/test/positions.txt");
+  else if (!strcmp(cmd, "bench")) {
+    if (argc > 4) { sc_nn_set(load_net(argv[4])); sc_nn_residual = argc > 5 && atoi(argv[5]); sc_board_eval = sc_nn_eval; }
+    cmd_bench(d, argc > 3 ? argv[3] : "engine/test/positions.txt");
+  }
+  else if (!strcmp(cmd, "gen") && argc > 5) {
+    if (argc > 7) { sc_nn_set(load_net(argv[7])); sc_nn_residual = argc > 8 && atoi(argv[8]); sc_board_eval = sc_nn_eval; }
+    cmd_gen(d, atoi(argv[3]), (unsigned)atoi(argv[4]), argv[5], argc > 6 ? atof(argv[6]) : 30);
+  }
+  else if (!strcmp(cmd, "tm") && argc > 3) cmd_tm(argv[2], argv[3]);
+  else if (!strcmp(cmd, "match") && argc > 5) { sc_nn_residual = argc > 7 && atoi(argv[7]); move_ms = argc > 8 ? atof(argv[8]) : 0; cmd_match(d, atoi(argv[3]), (unsigned)atoi(argv[4]), argv[5], argc > 6 ? atoi(argv[6]) : d); }
+  else if (!strcmp(cmd, "nneval") && argc > 4) cmd_nneval(argv[2], argv[3], atoi(argv[4]));
   else if (!strcmp(cmd, "selfplay")) cmd_selfplay(d, argc > 3 ? (unsigned)atoi(argv[3]) : (unsigned)time(0));
   else { fprintf(stderr, "unknown command %s\n", cmd); return 1; }
   return 0;

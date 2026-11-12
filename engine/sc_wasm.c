@@ -33,7 +33,7 @@ EXPORT int sc_w_piece_id(int sq) { return G.st.id[sq]; }
 EXPORT int sc_w_think(int max_depth, int min_depth, double node_limit) {
   S s;
   sc_s_from_game(&G, &s);
-  SearchCfg cfg = {max_depth, min_depth, node_limit};
+  SearchCfg cfg = {max_depth, min_depth, node_limit, 0};
   int n = sc_root_search(&s, &cfg, RES, &last_nodes);
   if (!n) return -2;
   last_score = RES[0].v;

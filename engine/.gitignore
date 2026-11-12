@@ -1,1 +1,3 @@
 build/
+nn/data/
+nn/__pycache__/

@@ -15,6 +15,7 @@ bot-vs-bot tournaments and, later, neural-network training. It is not used by th
 - `sc_cli.c`: native command line.
 - `sc_wasm.c`: WebAssembly exports (one game held in the module), no libc.
 - `test/`: Node scripts that load the site's `rules.js` and `bot.js` and compare.
+- `sc_nn.c`, `nn/`: neural-network scoring (first try), see `nn/README.md`.
 
 ## Build
 

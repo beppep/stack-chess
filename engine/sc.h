@@ -88,10 +88,26 @@ double sc_threat_material(const Pos *p, int c);
 typedef struct {
   int max_depth, min_depth;   // min_depth 0 means 2, like bot.js
   double node_limit;          // nodes per depth after min_depth (use a huge number for no limit)
+  double time_ms;             // after min_depth, stop deepening when this much time has passed (0: no limit; needs sc_clock_ms)
 } SearchCfg;
 typedef struct { Act a; double v; } RootResult;
 // Iterative deepening over the ordered first moves, like bot.js rootSearch. Returns the number of
 // results (best first); *nodes gets the nodes counted in the search.
 int sc_root_search(const S *s, const SearchCfg *cfg, RootResult *out, double *nodes);
 extern int sc_lmr;          // late move reductions on (1) or off
+extern double (*sc_clock_ms)(void);  // clock for SearchCfg.time_ms (set by the native CLI; none in wasm)
+// How a board with no stack is scored for the side to act. Default: sc_threat_material (bot.js).
+extern double (*sc_board_eval)(const Pos *p, int c);
+
+// ---------- Neural network evaluation (sc_nn.c) ----------
+// 768 inputs (own/enemy x 6 piece types x 64 squares, board turned so the side to act plays up),
+// NN_HIDDEN ReLU units, one output in centipawn-like units. Weights are float32:
+// W1[768][NN_HIDDEN], b1[NN_HIDDEN], W2[NN_HIDDEN], b2.
+#define NN_INPUTS 768
+#define NN_HIDDEN 128
+#define NN_FLOATS (NN_INPUTS * NN_HIDDEN + NN_HIDDEN + NN_HIDDEN + 1)
+int sc_nn_features(const Pos *p, int c, int *out);   // active input indices, returns count
+void sc_nn_set(const float *weights);                 // copies NN_FLOATS weights in
+double sc_nn_eval(const Pos *p, int c);
+extern int sc_nn_residual;                           // 1: score = threatMaterial + network (a learned correction)
 #endif

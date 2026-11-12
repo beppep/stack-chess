@@ -153,8 +153,11 @@ double sc_threat_material(const Pos *p, int c) {
   return score;
 }
 
+// How a board with no stack is scored for the side to act: threatMaterial (bot.js) unless a network is loaded.
+double (*sc_board_eval)(const Pos *p, int c) = sc_threat_material;
+
 double sc_evaluate(const S *s) {
-  if (!s->n) return sc_threat_material(&s->st, s->cur);
+  if (!s->n) return sc_board_eval(&s->st, s->cur);
   S t;
   sc_s_resolve(s, &t);
   if (t.winner == s->cur) return WIN;
@@ -170,8 +173,8 @@ double sc_evaluate(const S *s) {
     if (PTYPE(pc) == KING) king_saved = 1;
     else if (VAL[PTYPE(pc)] > saved) saved = VAL[PTYPE(pc)];
   }
-  if (t.winner >= 0) return king_saved ? sc_threat_material(&t.st, s->cur) : -WIN;
-  return sc_threat_material(&t.st, s->cur) + saved;
+  if (t.winner >= 0) return king_saved ? sc_board_eval(&t.st, s->cur) : -WIN;
+  return sc_board_eval(&t.st, s->cur) + saved;
 }
 
 // ---------- Search ----------
@@ -274,7 +277,8 @@ static void tt_store(int64_t key, int depth, int ext, int ply, double v, int fla
 
 #define MAX_PLY 128
 #define NO_KILLER 100000
-typedef struct { double nodes, limit; int abort; int killers[MAX_PLY]; } Ctx;
+typedef struct { double nodes, limit, deadline; int abort; int killers[MAX_PLY]; } Ctx;
+double (*sc_clock_ms)(void) = 0;
 
 static void move_to(Act *acts, int from, int to) {  // acts.splice(to, 0, acts.splice(from, 1)[0])
   Act a = acts[from];
@@ -285,7 +289,7 @@ static void move_to(Act *acts, int from, int to) {  // acts.splice(to, 0, acts.s
 
 static double search(const S *s, int depth, double alpha, double beta, int ply, Ctx *ctx, int ext) {
   if (depth == 0) return quiet(s, alpha, beta, ply, ext);
-  if (++ctx->nodes > ctx->limit) { ctx->abort = 1; return 0; }
+  if (++ctx->nodes > ctx->limit || (ctx->deadline > 0 && !((long long)ctx->nodes & 63) && sc_clock_ms() > ctx->deadline)) { ctx->abort = 1; return 0; }
   int64_t key = pos_key(s);
   TTE *hit = tt_find(key);
   if (hit && hit->depth == depth && hit->ext == ext && hit->ply == ply) {
@@ -346,9 +350,11 @@ int sc_root_search(const S *s, const SearchCfg *cfg, RootResult *out, double *no
   int n = sc_ordered_actions(s, acts, &r);
   for (int i = 0; i < n; i++) { out[i].a = acts[i]; out[i].v = 0; }
   RootResult round[MAX_ACTS];
+  double start = sc_clock_ms ? sc_clock_ms() : 0;
   int min_depth = cfg->min_depth ? cfg->min_depth : 2;
   for (int d = 1; d <= cfg->max_depth; d++) {
     ctx.limit = d <= min_depth ? INF : cfg->node_limit;
+    ctx.deadline = d > min_depth && cfg->time_ms > 0 && sc_clock_ms ? start + cfg->time_ms : 0;
     double alpha = -INF;
     for (int i = 0; i < n; i++) {
       const Act *a = &acts[i];
