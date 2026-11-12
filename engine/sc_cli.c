@@ -197,20 +197,20 @@ static void cmd_selfplay(int depth, unsigned seed) {
 //   game <pair> <A colour w|b> <winner w|b|-> <bot actions> <A starts> <A lost> <B starts> <B lost>
 // "starts": captures a side put on an empty stack; "lost": of those, the capturing piece was taken and the
 // target survived once the stack resolved (starting a fight and losing it).
-// A bot's settings: "s<saved rule>k<king rule>f<frozen factor>", any part may be left out (a plain number = saved rule).
-typedef struct { int saved, king; double frozen; } BotCfg;
+// A bot's settings: "s<saved rule>k<king rule>f<frozen factor>p<principal variation search 0/1/2>e<free stack replies>", any part may be left out (a plain number = saved rule).
+typedef struct { int saved, king; double frozen; int pvs, ext; } BotCfg;
 static BotCfg parse_bot(const char *t) {
-  BotCfg b = {0, 0, 0.9};
+  BotCfg b = {0, 0, 0.9, 0, 6};
   if (*t >= '0' && *t <= '9') { b.saved = atoi(t); return b; }
   while (*t) {
     char k = *t++;
     double v = atof(t);
     while (*t && !(*t >= 'a' && *t <= 'z')) t++;
-    if (k == 's') b.saved = (int)v; else if (k == 'k') b.king = (int)v; else if (k == 'f') b.frozen = v;
+    if (k == 's') b.saved = (int)v; else if (k == 'k') b.king = (int)v; else if (k == 'f') b.frozen = v; else if (k == 'p') b.pvs = (int)v; else if (k == 'e') b.ext = (int)v;
   }
   return b;
 }
-static void use_bot(BotCfg b) { sc_saved_rule = b.saved; sc_king_rule = b.king; sc_frozen = b.frozen; }
+static void use_bot(BotCfg b) { sc_saved_rule = b.saved; sc_king_rule = b.king; sc_frozen = b.frozen; sc_pvs = b.pvs; sc_max_ext = b.ext; }
 static unsigned rng_state;
 static unsigned rng(void) { rng_state = rng_state * 1103515245u + 12345u; return rng_state >> 8; }
 static int alive_id(const Game *g, int id) { for (int i = 0; i < 64; i++) if (g->st.board[i] && g->st.id[i] == id) return 1; return 0; }
@@ -264,6 +264,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   const char *cmd = argv[1];
+  if (getenv("SC_PVS")) sc_pvs = atoi(getenv("SC_PVS"));
   int d = argc > 2 ? atoi(argv[2]) : 3;
   if (!strcmp(cmd, "replay")) cmd_replay();
   else if (!strcmp(cmd, "search")) cmd_search(d);

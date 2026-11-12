@@ -94,6 +94,8 @@ typedef struct { Act a; double v; } RootResult;
 // results (best first); *nodes gets the nodes counted in the search.
 int sc_root_search(const S *s, const SearchCfg *cfg, RootResult *out, double *nodes);
 extern int sc_lmr;          // late move reductions on (1) or off
+extern int sc_pvs;          // principal variation search on (1) or off
+extern int sc_max_ext;      // free stack replies allowed inside the search
 // How evaluate counts a dying piece of the side to act as "saved" (it can dodge):
 // 0 always (bot.js), 1 only if no second enemy attacker without a move on the stack, 2 never.
 extern int sc_saved_rule;
