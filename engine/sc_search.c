@@ -104,8 +104,8 @@ int sc_ordered_actions(const S *s, Act *out, S *resolved) {
 }
 
 // ---------- Evaluation ----------
-int sc_king_rule = 0;     // two attackers on a king: 0 any two = half a lost game, 1 only two not attacked themselves, 2 only -300
-double sc_frozen = 0.9;   // value kept by a piece with exactly one attacker that is not attacked itself
+int sc_king_rule = 2;     // two attackers on a king: 0 any two = half a lost game, 1 only two not attacked themselves, 2 only -300
+double sc_frozen = 0.6;   // king 2 + frozen 0.6 won 199-92 against king 0 + frozen 0.9 over 300 games (2026-11-12)   // value kept by a piece with exactly one attacker that is not attacked itself
 double sc_threat_material(const Pos *p, int c) {
   const uint8_t *b = p->board;
   int hits[64], fresh[64], pairs[1024], n = 0;

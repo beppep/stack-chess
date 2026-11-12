@@ -131,8 +131,10 @@ function threatMaterial(st, c) {
     const p = b[sq];
     if (!p) continue;
     const sign = p.c === c ? 1 : -1;
-    if (p.t === 'k') { score -= sign * 10 * hits[sq]; if (hits[sq] >= 2) score -= sign * WIN / 2; }
-    else score += sign * VAL[p.t] * 0.9 ** fresh[sq];
+    // A king attacked twice costs 300. A piece with one attacker that isn't attacked itself is frozen
+    // (moving it gets it taken on top), so it keeps 60%; with more such attackers, 0.9 per attacker.
+    if (p.t === 'k') { score -= sign * 10 * hits[sq]; if (hits[sq] >= 2) score -= sign * 300; }
+    else score += sign * VAL[p.t] * (fresh[sq] === 1 ? 0.6 : 0.9 ** fresh[sq]);
   }
   return score;
 }
