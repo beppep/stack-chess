@@ -47,7 +47,9 @@ static inline int on_stack(const S *s, int id) {
 int sc_s_actions(const S *s, Act *out, S *resolved) {
   Move mv[MAX_MOVES];
   int n = sc_legal_moves(&s->st, s->cur, mv), k = 0;
-  for (int i = 0; i < n; i++) if (!on_stack(s, mv[i].id)) { out[k].t = A_MOVE; out[k].m = mv[i]; k++; }
+  uint32_t stacked = 0;
+  for (int j = 0; j < s->n; j++) stacked |= 1u << (s->stack[j].id & 31);
+  for (int i = 0; i < n; i++) if (!(stacked >> (mv[i].id & 31) & 1)) { out[k].t = A_MOVE; out[k].m = mv[i]; k++; }
   if (s->n) {
     sc_s_resolve(s, resolved);
     if (resolved->winner >= 0) { out[k].t = A_RESOLVE; k++; }
@@ -96,17 +98,114 @@ static void sort_acts(Act *acts, int *score, int n) {
   }
 }
 
+// Order scores are never negative, and most actions score 0. Sorting only the positive ones and
+// putting the zeros after them, in their original order, is the same stable sort.
 int sc_ordered_actions(const S *s, Act *out, S *resolved) {
-  int n = sc_s_actions(s, out, resolved), score[MAX_ACTS];
-  for (int i = 0; i < n; i++) score[i] = sc_order_score(s, &out[i], resolved);
-  sort_acts(out, score, n);
+  Act all[MAX_ACTS];
+  int n = sc_s_actions(s, all, resolved), score[MAX_ACTS], k = 0;
+  for (int i = 0; i < n; i++) {
+    int sc = sc_order_score(s, &all[i], resolved);
+    if (sc > 0) { out[k] = all[i]; score[k++] = sc; }
+  }
+  sort_acts(out, score, k);
+  for (int i = 0; i < n; i++) if (sc_order_score(s, &all[i], resolved) <= 0) out[k++] = all[i];
   return n;
 }
 
 // ---------- Evaluation ----------
 int sc_king_rule = 2;     // two attackers on a king: 0 any two = half a lost game, 1 only two not attacked themselves, 2 only -300
 double sc_frozen = 0.6;   // king 2 + frozen 0.6 won 199-92 against king 0 + frozen 0.9 over 300 games (2026-11-12)   // value kept by a piece with exactly one attacker that is not attacked itself
+// Attack tables for the fast version below. Bit i of a mask is square i (a8 = 0, h1 = 63).
+static uint64_t KN_ATT[64], KG_ATT[64], PAWN_ATT[2][64], RAY[8][64];
+static int att_ready = 0;
+static void att_init(void) {
+  for (int sq = 0; sq < 64; sq++) {
+    int r = sq >> 3, f = sq & 7;
+    KN_ATT[sq] = KG_ATT[sq] = PAWN_ATT[0][sq] = PAWN_ATT[1][sq] = 0;
+    for (int i = 0; i < 8; i++) {
+      int rr = r + KN[i][0], cc = f + KN[i][1];
+      if (rr >= 0 && rr < 8 && cc >= 0 && cc < 8) KN_ATT[sq] |= 1ull << (rr * 8 + cc);
+      rr = r + KG[i][0]; cc = f + KG[i][1];
+      if (rr >= 0 && rr < 8 && cc >= 0 && cc < 8) KG_ATT[sq] |= 1ull << (rr * 8 + cc);
+      RAY[i][sq] = 0;
+      for (rr = r + QD[i][0], cc = f + QD[i][1]; rr >= 0 && rr < 8 && cc >= 0 && cc < 8; rr += QD[i][0], cc += QD[i][1]) RAY[i][sq] |= 1ull << (rr * 8 + cc);
+    }
+    for (int col = 0; col < 2; col++) {
+      int r1 = r + (col == WHITE ? -1 : 1);
+      if (r1 < 0 || r1 > 7) continue;
+      if (f > 0) PAWN_ATT[col][sq] |= 1ull << (r1 * 8 + f - 1);
+      if (f < 7) PAWN_ATT[col][sq] |= 1ull << (r1 * 8 + f + 1);
+    }
+  }
+  att_ready = 1;
+}
+// Directions 0 (up), 2 (left), 4 and 5 (up-left, up-right) go to lower squares: the nearest blocker
+// is the highest bit. The others go to higher squares: the nearest blocker is the lowest bit.
+static inline int ray_down(int d) { return d == 0 || d == 2 || d == 4 || d == 5; }
+
+// White and Black piece masks of a board, eight squares at a time. A square's code is 0 or
+// type (1..6) + 8 * colour, so a byte is non-zero exactly when its low three bits are.
+static inline void board_masks(const uint8_t *b, uint64_t occ[2]) {
+  occ[0] = occ[1] = 0;
+  for (int row = 0; row < 8; row++) {
+    uint64_t x = 0;
+    __builtin_memcpy(&x, b + row * 8, 8);  // 8 squares, little-endian (x86 and WebAssembly)
+    uint64_t t = x & 0x0707070707070707ull;
+    uint64_t any = ((t + 0x7F7F7F7F7F7F7F7Full) & 0x8080808080808080ull) >> 7;  // 1 per non-empty square
+    uint64_t blk = (x >> 3) & 0x0101010101010101ull;
+    // Gather the low bit of each byte into one byte (square order within the row).
+    occ[0] |= (((any & ~blk) * 0x0102040810204080ull) >> 56) << (row * 8);
+    occ[1] |= (((any & blk) * 0x0102040810204080ull) >> 56) << (row * 8);
+  }
+}
+
+// Same result as sc_threat_material_ref, bit for bit: the attack counts are integers and the final
+// sum runs over the squares in the same order with the same operations.
 double sc_threat_material(const Pos *p, int c) {
+  if (!att_ready) att_init();
+  const uint8_t *b = p->board;
+  uint64_t occ[2], tg[64];
+  uint8_t hits[64] = {0}, fresh[64] = {0};
+  board_masks(b, occ);
+  uint64_t all = occ[0] | occ[1];
+  // One mask per piece type, then each type's attacks without asking every piece what it is.
+  uint64_t tm[8] = {0};
+  for (uint64_t m = all; m; m &= m - 1) { int sq = __builtin_ctzll(m); tm[PTYPE(b[sq])] |= 1ull << sq; }
+#define NEAR(d, sq) do { uint64_t blk = RAY[d][sq] & all; if (blk) a |= 1ull << (ray_down(d) ? 63 - __builtin_clzll(blk) : __builtin_ctzll(blk)); } while (0)
+#define RECORD(sq) do { a &= enemy; tg[sq] = a; for (; a; a &= a - 1) hits[__builtin_ctzll(a)]++; } while (0)
+  for (int col = 0; col < 2; col++) {
+    uint64_t own = occ[col], enemy = occ[col ^ 1], a;
+    for (uint64_t m = tm[PAWN] & own; m; m &= m - 1) { int sq = __builtin_ctzll(m); a = PAWN_ATT[col][sq]; RECORD(sq); }
+    for (uint64_t m = tm[KNIGHT] & own; m; m &= m - 1) { int sq = __builtin_ctzll(m); a = KN_ATT[sq]; RECORD(sq); }
+    for (uint64_t m = tm[KING] & own; m; m &= m - 1) { int sq = __builtin_ctzll(m); a = KG_ATT[sq]; RECORD(sq); }
+    for (uint64_t m = (tm[BISHOP] | tm[QUEEN]) & own; m; m &= m - 1) {
+      int sq = __builtin_ctzll(m); a = 0;
+      NEAR(4, sq); NEAR(5, sq); NEAR(6, sq); NEAR(7, sq);
+      if (b[sq] == PCODE(QUEEN, col)) { NEAR(0, sq); NEAR(1, sq); NEAR(2, sq); NEAR(3, sq); }
+      RECORD(sq);
+    }
+    for (uint64_t m = tm[ROOK] & own; m; m &= m - 1) { int sq = __builtin_ctzll(m); a = 0; NEAR(0, sq); NEAR(1, sq); NEAR(2, sq); NEAR(3, sq); RECORD(sq); }
+  }
+#undef NEAR
+#undef RECORD
+  for (uint64_t m = all; m; m &= m - 1) {
+    int sq = __builtin_ctzll(m);
+    if (!hits[sq]) for (uint64_t a = tg[sq]; a; a &= a - 1) fresh[__builtin_ctzll(a)]++;
+  }
+  double score = 0;
+  for (uint64_t m = all; m; m &= m - 1) {  // squares in increasing order, as the original
+    int sq = __builtin_ctzll(m), pc = b[sq];
+    int sign = PCOLOR(pc) == c ? 1 : -1;
+    if (PTYPE(pc) == KING) {
+      score -= sign * 10 * hits[sq];
+      if ((sc_king_rule == 1 ? fresh[sq] : hits[sq]) >= 2) score -= sign * (sc_king_rule == 2 ? 300 : WIN / 2);
+    } else score += (double)(sign * VAL[PTYPE(pc)]) * (fresh[sq] == 1 ? sc_frozen : P9[fresh[sq]]);
+  }
+  return score;
+}
+
+// The original square-by-square version, kept to test the fast one against.
+double sc_threat_material_ref(const Pos *p, int c) {
   const uint8_t *b = p->board;
   int hits[64], fresh[64], pairs[1024], n = 0;
   for (int i = 0; i < 64; i++) { hits[i] = 0; fresh[i] = 0; }
@@ -185,15 +284,19 @@ double sc_evaluate(const S *s) {
   S t;
   sc_s_resolve(s, &t);
   if (t.winner == s->cur) return WIN;
-  uint8_t alive[32] = {0};
-  for (int i = 0; i < 64; i++) if (t.st.board[i]) alive[t.st.id[i] & 31] = 1;
+  if (!att_ready) att_init();
+  uint64_t occ[2];
+  uint32_t alive = 0, stacked = 0;
+  board_masks(t.st.board, occ);
+  for (uint64_t m = occ[0] | occ[1]; m; m &= m - 1) alive |= 1u << (t.st.id[__builtin_ctzll(m)] & 31);
+  for (int j = 0; j < s->n; j++) stacked |= 1u << (s->stack[j].id & 31);
+  board_masks(s->st.board, occ);
   int saved = 0, king_saved = 0;
   Move tmp[MAX_MOVES];
-  for (int sq = 0; sq < 64; sq++) {
-    int pc = s->st.board[sq];
-    if (!pc || PCOLOR(pc) != s->cur) continue;
+  for (uint64_t m = occ[s->cur]; m; m &= m - 1) {
+    int sq = __builtin_ctzll(m), pc = s->st.board[sq];
     int id = s->st.id[sq];
-    if (alive[id & 31] || on_stack(s, id) || !sc_piece_moves(&s->st, sq, tmp)) continue;
+    if (((alive | stacked) >> (id & 31) & 1) || !sc_piece_moves(&s->st, sq, tmp)) continue;
     if (sc_saved_rule == 2 || (sc_saved_rule == 1 && free_attacker(s, sq, s->cur))) continue;
     if (PTYPE(pc) == KING) king_saved = 1;
     else if (VAL[PTYPE(pc)] > saved) saved = VAL[PTYPE(pc)];
@@ -226,19 +329,36 @@ static double quiet(const S *s, double alpha, double beta, int ply, int ext) {
   if (best >= beta || ext >= MAX_STACK_EXT || !s->n) return best;
   if (best > alpha) alpha = best;
   // Only plain moves can be stack related, so the resolve actions of sActions() are skipped here.
-  Move mv[MAX_MOVES];
-  int n = sc_legal_moves(&s->st, s->cur, mv);
+  // Stack related moves: capturing an enemy piece that has a move on the stack (squares in hit),
+  // or any move of a piece an enemy stack move aims at (squares in aimed). Generated piece by
+  // piece in square order, so they come in the same order as the full move list.
+  uint32_t stacked = 0;
+  uint64_t aimed = 0, hit = 0, occ[2];
+  for (int j = 0; j < s->n; j++) {
+    stacked |= 1u << (s->stack[j].id & 31);
+    if (s->stack[j].player != s->cur) aimed |= 1ull << s->stack[j].to;
+  }
+  board_masks(s->st.board, occ);
+  for (uint64_t m = occ[s->cur ^ 1]; m; m &= m - 1) { int sq = __builtin_ctzll(m); if (stacked >> (s->st.id[sq] & 31) & 1) hit |= 1ull << sq; }
+  aimed &= occ[s->cur];
+  if (!hit && !aimed) return best;
+  Move mv[64];
   Act a; S c;
   a.t = A_MOVE;
-  for (int i = 0; i < n; i++) {
-    if (on_stack(s, mv[i].id)) continue;
+  for (uint64_t m = occ[s->cur]; m; m &= m - 1) {
+   int sq = __builtin_ctzll(m);
+   if (stacked >> (s->st.id[sq] & 31) & 1) continue;
+   int all_count = aimed >> sq & 1;
+   int n = sc_piece_moves(&s->st, sq, mv);
+   for (int i = 0; i < n; i++) {
+    if (!all_count && !(hit >> mv[i].to & 1)) continue;
     a.m = mv[i];
-    if (!stack_related(s, &a)) continue;
     sc_s_apply(s, &a, 0, &c);
     double v = c.winner >= 0 ? (c.winner == s->cur ? WIN - ply - 1 : -(WIN - ply - 1)) : -quiet(&c, -beta, -alpha, ply + 1, ext + 1);
     if (v > best) best = v;
     if (v > alpha) alpha = v;
-    if (alpha >= beta) break;
+    if (alpha >= beta) return best;
+   }
   }
   return best;
 }

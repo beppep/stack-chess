@@ -84,6 +84,7 @@ int sc_ordered_actions(const S *s, Act *out, S *resolved);  // actions sorted li
 int sc_act_key(const Act *a);
 double sc_evaluate(const S *s);
 double sc_threat_material(const Pos *p, int c);
+double sc_threat_material_ref(const Pos *p, int c);  // the slow original, for tests
 
 typedef struct {
   int max_depth, min_depth;   // min_depth 0 means 2, like bot.js
