@@ -1,15 +1,15 @@
-// Plays games through engine/worker.js (the site's hard level) in Node: the network bot with a time budget
-// against the classic engine with the node budget the site used before (30,000 nodes, threatMaterial only).
+// Plays games through engine/worker.js (the site's hard level) in Node: the network bot against the classic
+// engine (threatMaterial only), both at depth 3 and then deepening until ms milliseconds have passed.
 // Each pair is one random opening played twice with colours swapped. Prints every game and the ms per move.
-//   node engine/test/worker.mjs [pairs=1] [ms=1000] [seed=1]
+//   node engine/test/worker.mjs [pairs=1] [ms=1000] [seed=1] [classicMs=ms]
 import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { engineDir, loadJs, rng } from './js.mjs';
 
-const pairs = +(process.argv[2] || 1), ms = +(process.argv[3] || 1000), seed = +(process.argv[4] || 1);
+const pairs = +(process.argv[2] || 1), ms = +(process.argv[3] || 1000), seed = +(process.argv[4] || 1), classicMs = +(process.argv[5] || ms);
 const NET = { maxDepth: 30, minDepth: 3, nodes: 1e18, ms };
-const CLASSIC = { maxDepth: 30, minDepth: 3, nodes: 30000, ms: 0 };
+const CLASSIC = { maxDepth: 30, minDepth: 3, nodes: 1e18, ms: classicMs };
 
 // worker.js in its own context, with fetch reading files next to it. withNet false: the network file is missing.
 function makeWorker(withNet) {

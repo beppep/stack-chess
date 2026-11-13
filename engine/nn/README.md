@@ -89,8 +89,17 @@ the same 80 openings (`nnmatch 2 5 <s*1237> ... 2 1 200`):
 threatMaterial + network; without the file it plays with threatMaterial alone. The hard level searches to depth 3, then
 deeper until 700 ms have passed (`sc_w_think(30, 3, 1e18, 700)`; the wasm reads the clock through its one import,
 `env.now_ms`). The engine it replaces (30,000 nodes, no network) took about 750 ms per move in the browser on this PC.
-`node engine/test/worker.mjs pairs ms seed` plays games through `worker.js` itself: the network at `ms` per move
-against the old hard settings.
+`node engine/test/worker.mjs pairs ms seed [classicMs]` plays games through `worker.js` itself: the network at `ms`
+per move against the classic engine (no network) at `classicMs` (default the same). Results with main's faster engine
+(bb33350), 80 games each (8 processes at once, so moves took longer than alone):
+
+| network | classic | score | real ms per move, network / classic |
+|---|---|---|---|
+| 700 ms | 700 ms | 48 W, 13 D, 19 L = 68.1% | 993 / 722 |
+| 700 ms | 1000 ms | 40 W, 12 D, 28 L = **57.5%** | 926 / 1001 |
+
+Both sides always finish depth 3 before the clock counts, and the network's depth 3 is slower, so at the same
+budget it uses more real time. At about equal real time it scores 57.5% (about +50 Elo, suggestive over 80 games).
 
 ## Next ideas
 
